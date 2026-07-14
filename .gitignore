@@ -1,0 +1,12 @@
+# 런타임 지식 데이터(샘플·생성물)는 버전관리 제외 — 기준정보 config만 추적
+knowledge/sources/
+knowledge/proposals/
+knowledge/events/
+knowledge/entities/
+knowledge/relations/
+knowledge/state/
+!knowledge/**/.gitkeep
+knowledge/config/vocabulary.yaml
+knowledge/config/llm.json
+*.tmp
+__pycache__/

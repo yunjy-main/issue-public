@@ -1,0 +1,49 @@
+{
+  "_note": "EXTRACT 단계 추출기 설정. 이 파일을 llm.json으로 복사해 사용. 없으면 mode=stub(오프라인 결정론).",
+  "_modes": {
+    "stub": "오프라인 결정론적 휴리스틱. 설정 불필요. LLM 없이 동작.",
+    "cli": "Claude Code CLI(claude -p) 서브프로세스. host 인증 사용 — API 키 불필요(alice-agnt 방식). 외부 개발 테스트 기본.",
+    "anthropic": "Claude를 API로 사용. anthropic SDK + API 키 필요. temperature 금지·thinking 생략.",
+    "http": "OpenAI 호환 /chat/completions — 로컬 gpt-oss(Ollama)·사내 LLM 공통. 반입 후 운영 기본."
+  },
+
+  "_example_cli": {
+    "mode": "cli",
+    "model": "haiku",
+    "timeout": 240,
+    "producer": {"type": "llm", "name": "claude-cli", "version": "haiku"},
+    "_command": "기본 경로: ~/AppData/Roaming/npm/claude.cmd. 다르면 command로 지정. node_dir 기본 C:/Program Files/nodejs.",
+    "_why": "claude CLI가 host 인증으로 동작하므로 API 키 없이 실제 Claude 추출 가능. 단 CLI 오버헤드로 호출당 ~40-60초(테스트용). model=opus면 더 느림."
+  },
+
+  "_example_gpt_oss_local": {
+    "mode": "http",
+    "url": "http://127.0.0.1:11434/v1/chat/completions",
+    "model": "gpt-oss",
+    "extra_payload": {"temperature": 0},
+    "timeout": 120,
+    "producer": {"type": "llm", "name": "gpt-oss", "version": "local"},
+    "_run": "먼저 로컬에 서버 기동: `ollama run gpt-oss` (또는 LM Studio에서 gpt-oss 로드 후 로컬 서버 켜기). 그러면 위 URL로 OpenAI 호환 호출이 붙는다.",
+    "_why": "로컬/오프라인 OSS 모델이라 클라우드 키 불필요 — 사내 환경 근처에서 돌릴 수 있는 후보. 파서가 코드펜스·JSON배열·reasoning 서두 등 OSS 잡음에 관대하다."
+  },
+
+  "_example_anthropic": {
+    "mode": "anthropic",
+    "model": "claude-opus-4-8",
+    "max_tokens": 8000,
+    "api_key_env": "ANTHROPIC_API_KEY",
+    "producer": {"type": "llm", "name": "claude", "version": "opus-4-8"},
+    "_auth": "환경변수 ANTHROPIC_API_KEY(또는 api_key_env가 가리키는 변수)에 키가 있으면 사용. 없으면 SDK가 env/ant 프로필 자동 해소. 키는 이 파일에 넣지 않는다.",
+    "_model_tip": "'성능 보통'인 사내 LLM에 가깝게 시뮬레이션하려면 claude-haiku-4-5로 낮춰도 된다."
+  },
+
+  "_example_http": {
+    "mode": "http",
+    "url": "http://<사내-llm-endpoint>/v1/chat/completions",
+    "model": "internal-model-id",
+    "headers": {"Authorization": "Bearer <사내-토큰-또는-헤더>"},
+    "extra_payload": {"temperature": 0},
+    "timeout": 60,
+    "producer": {"type": "llm", "name": "internal-llm", "version": "0.1"}
+  }
+}

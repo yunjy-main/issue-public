@@ -1,0 +1,1787 @@
+<!doctype html>
+<html lang="ko" data-app="issue-knowledge">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>issue — 이슈 지식 시스템</title>
+<style>
+  /* 팔레트: llm-sessions(무채색 크롬, 라이트 기본) + 서재(파랑 accent) 관례 */
+  :root{
+    --bg:#f6f7f8; --panel:#fff; --border:#dee2e6; --fg:#1a1f26; --muted:#67717c;
+    --accent:#2563eb; --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e;
+    --chip:#eef0f2; --hover:#eef0f2; --sel:#e3ecff; --mark:#fff3b8;
+    --age-0:#000; --age-1:#3d4854; --age-2:#67717c; --age-3:#98a1ab; --age-4:#c1c8cf;
+    --mono:ui-monospace,"Cascadia Code",Consolas,"D2Coding",monospace;
+    --safe-top:env(safe-area-inset-top,0px); --safe-bot:env(safe-area-inset-bottom,0px);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#141618; --panel:#1b1e22; --border:#2c3138; --fg:#e5e8eb; --muted:#88929c;
+      --accent:#6ea8fe; --ok:#7ee787; --warn:#d29922; --bad:#e5534b;
+      --chip:#22262b; --hover:#22262b; --sel:#2b3450; --mark:#4a3c12;
+      --age-0:#fff; --age-1:#c3cbd3; --age-2:#88929c; --age-3:#5d6772; --age-4:#40484f; }
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);
+    font:12px/1.45 "Segoe UI","Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif;
+    overscroll-behavior-y:none}
+  a{color:var(--accent);text-decoration:none}
+  .topbar{position:sticky;top:0;z-index:20;display:flex;align-items:baseline;gap:8px;
+    padding:calc(5px + var(--safe-top)) 10px 5px;border-bottom:1px solid var(--border);background:var(--panel)}
+  .topbar h1{margin:0;font-size:13px;font-weight:600;white-space:nowrap}
+  .topbar h1 a{color:var(--fg)}
+  .topbar-meta{flex:1;min-width:0;color:var(--muted);font-size:10.5px;text-align:right;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .toolbar{position:sticky;top:calc(24px + var(--safe-top));z-index:19;display:flex;align-items:center;gap:6px;
+    padding:5px 10px;background:var(--bg);border-bottom:1px solid var(--border)}
+  .toolbar[hidden]{display:none}
+  .back-link{flex:none;font-size:11px;font-weight:600;color:var(--accent);cursor:pointer;
+    border:1px solid var(--border);border-radius:5px;background:var(--panel);padding:3px 8px}
+  .back-link[hidden]{display:none}
+  .search{flex:1;min-width:0;padding:3px 8px;border:1px solid var(--border);border-radius:5px;
+    background:var(--panel);color:var(--fg);font:inherit;outline:none}
+  .search:focus{outline:1px solid var(--accent);outline-offset:-1px}
+  .crumb-doc{flex:none;font-size:11px;color:var(--muted);max-width:38vw;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  main{max-width:920px;margin:0 auto;padding:0 0 calc(16px + var(--safe-bot))}
+  .screen[hidden]{display:none}
+  /* ---- 문서 목록: llm-sessions 테이블 관례 ---- */
+  .table-wrap{background:var(--panel);border:1px solid var(--border);border-radius:6px;margin:8px 10px;overflow:auto}
+  table.docs{border-collapse:collapse;width:100%}
+  table.docs th{font-size:10px;color:var(--muted);font-weight:600;text-align:left;padding:3px 7px;
+    border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--panel);z-index:1;white-space:nowrap}
+  table.docs td{padding:4px 7px;border-bottom:1px solid var(--border);vertical-align:top}
+  table.docs tr:last-child td{border-bottom:none}
+  table.docs tbody tr{cursor:pointer}
+  table.docs tbody tr:active,table.docs tbody tr:hover{background:var(--hover)}
+  td.did{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--accent);white-space:nowrap}
+  td.dtitle{min-width:0}
+  td.dtitle .t{font-size:12px;font-weight:600;line-height:1.35}
+  td.dtitle .s{font-size:10.5px;color:var(--muted);margin-top:1px;line-height:1.4;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  td.dst,th.dst{white-space:nowrap}
+  td.dupd{font-family:var(--mono);font-size:10.5px;white-space:nowrap}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:10.5px;color:var(--muted)}
+  .tag{display:inline-block;font-size:9px;line-height:1.6;padding:0 4px;border:1px solid var(--border);
+    border-radius:3px;color:var(--muted);white-space:nowrap}
+  .tag.st-frozen{color:var(--accent);border-color:var(--accent)}
+  .tag.st-living{color:var(--ok);border-color:var(--ok)}
+  .tag.st-append-only{color:var(--warn);border-color:var(--warn)}
+  .age-0{color:var(--age-0);font-weight:600}.age-1{color:var(--age-1)}.age-2{color:var(--age-2)}
+  .age-3{color:var(--age-3)}.age-4{color:var(--age-4)}
+  /* ---- 리더 ---- */
+  .tocbar{position:sticky;top:calc(53px + var(--safe-top));z-index:18;display:flex;gap:4px;overflow-x:auto;
+    background:var(--bg);padding:4px 10px;border-bottom:1px solid var(--border);scrollbar-width:none}
+  .tocbar::-webkit-scrollbar{display:none}
+  .tocbar a{flex:none;font-size:10px;background:var(--chip);color:var(--muted);border:1px solid var(--border);
+    border-radius:4px;padding:1px 7px}
+  .tocbar a:active{background:var(--sel);color:var(--fg)}
+  article{padding:4px 12px 24px;word-break:break-word;font-size:12.5px}
+  article h1{font-size:15.5px;margin:12px 0 5px;line-height:1.3}
+  article h2{font-size:13.5px;margin:14px 0 4px;padding-bottom:2px;border-bottom:1px solid var(--border)}
+  article h3{font-size:12.5px;margin:10px 0 3px}
+  article h4{font-size:12px;margin:9px 0 3px;color:var(--muted)}
+  article p{margin:4px 0}
+  article ul,article ol{margin:3px 0;padding-left:19px}
+  article li{margin:1px 0}
+  article blockquote{margin:5px 0;padding:4px 9px;border-left:3px solid var(--accent);background:var(--panel);
+    border-radius:0 5px 5px 0}
+  article blockquote p{margin:2px 0}
+  article code{background:var(--chip);border-radius:3px;padding:0 3px;font-size:11px;font-family:var(--mono)}
+  article pre{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:7px 9px;
+    overflow-x:auto;font-size:10.5px;line-height:1.45;margin:5px 0}
+  article pre code{background:none;padding:0;font-size:inherit}
+  article table{border-collapse:collapse;width:100%;margin:5px 0;font-size:11px;display:block;overflow-x:auto}
+  article th,article td{border:1px solid var(--border);padding:2px 6px;text-align:left;vertical-align:top}
+  article th{background:var(--chip);white-space:nowrap;font-size:10px;color:var(--muted)}
+  article hr{border:none;border-top:1px solid var(--border);margin:10px 0}
+  article svg{max-width:100%;height:auto;display:block;margin:7px auto;background:var(--panel);
+    border:1px solid var(--border);border-radius:6px;padding:5px}
+  .docmeta{font-size:10.5px;color:var(--muted);padding:6px 12px 0;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .hlflash{background:var(--mark);border-radius:3px;transition:background 1.2s}
+  /* ---- 검색 결과 ---- */
+  .hit{display:block;padding:5px 10px;border-bottom:1px solid var(--border);color:inherit}
+  .hit:active,.hit:hover{background:var(--hover)}
+  .hit .d{font-size:10px;color:var(--accent);font-weight:600;font-family:var(--mono)}
+  .hit .l{font-size:11px;margin-top:1px}
+  .hit .l mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
+  .empty{padding:20px 12px;text-align:center;color:var(--muted);font-size:11px}
+  footer{padding:10px 12px calc(12px + var(--safe-bot));font-size:9.5px;color:var(--muted);text-align:center}
+  /* ---- 탭 ---- */
+  .tabbar{position:sticky;top:calc(24px + var(--safe-top));z-index:19;display:flex;gap:4px;
+    padding:4px 8px;background:var(--panel);border-bottom:1px solid var(--border)}
+  .tabbar a{font-size:11px;color:var(--muted);text-decoration:none;padding:3px 9px;border:1px solid transparent;border-radius:5px}
+  .tabbar a.on{color:var(--accent);border-color:var(--accent);font-weight:600}
+  /* ---- 입력/실행 ---- */
+  .run-pane{padding:8px 10px}
+  .run-in{display:flex;flex-direction:column;gap:6px}
+  .run-in textarea{width:100%;min-height:120px;resize:vertical;background:var(--panel);color:var(--fg);
+    border:1px solid var(--border);border-radius:6px;padding:8px;font:inherit;line-height:1.5;outline:none}
+  .run-in textarea:focus{outline:1px solid var(--accent);outline-offset:-1px}
+  .run-ctl{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .run-ctl select,.btn{font:inherit;font-size:12px;border:1px solid var(--border);border-radius:6px;
+    background:var(--panel);color:var(--fg);padding:5px 12px;cursor:pointer}
+  .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+  .btn:disabled{opacity:.5;cursor:default}
+  .runmsg{font-size:11px;color:var(--muted);min-height:15px}
+  .runmsg .err{color:var(--bad)}
+  .cand{border:1px solid var(--border);border-radius:6px;margin:6px 0;background:var(--panel);overflow:hidden}
+  .cand.rej{opacity:.45}
+  .cand-h{display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+  .cand-h .ty{font-size:9px;font-weight:700;padding:0 5px;border-radius:3px;border:1px solid var(--accent);color:var(--accent);text-transform:uppercase}
+  .cand-h .ty.finding{border-color:var(--muted);color:var(--muted)}
+  .cand-h .ty.issue{border-color:var(--bad);color:var(--bad)}
+  .cand-h .ty.initiative{border-color:var(--warn);color:var(--warn)}
+  .cand-h .ty.context{border-color:var(--ok);color:var(--ok)}
+  .cand-h .cf{font-size:9px;color:var(--muted)}
+  .cand-h .rev{margin-left:auto;display:flex;gap:3px}
+  .cand-h .rev button{font-size:10px;border:1px solid var(--border);background:var(--bg);color:var(--muted);
+    border-radius:4px;padding:1px 7px;cursor:pointer}
+  .cand-h .rev button.on{color:#fff;font-weight:600}
+  .cand-h .rev button.acc.on{background:var(--ok);border-color:var(--ok)}
+  .cand-h .rev button.rej.on{background:var(--bad);border-color:var(--bad)}
+  .cand-h .rev button.edt.on{background:var(--accent);border-color:var(--accent)}
+  .cand-b{padding:6px 8px;font-size:11.5px}
+  .cand-b .ttl{font-weight:600}
+  .cand-b .ref{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:2px}
+  .cand-b input.ed{width:100%;margin-top:4px;background:var(--bg);color:var(--fg);border:1px solid var(--accent);
+    border-radius:4px;padding:3px 6px;font:inherit;font-size:11.5px}
+  .cand-b select.ed{margin-top:4px;font-size:11px;background:var(--bg);color:var(--fg);border:1px solid var(--accent);border-radius:4px;padding:2px}
+  .rel-list{font-size:10.5px;color:var(--muted);font-family:var(--mono);padding:4px 8px}
+  .rel-list div{padding:1px 0}
+  .links-note{font-size:10.5px;color:var(--muted);padding:4px 8px}
+  .links-note .amb{color:var(--warn)}
+  /* ---- 지식 ---- */
+  .tiles{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px}
+  .tile{flex:1 1 70px;border:1px solid var(--border);border-radius:6px;background:var(--panel);padding:6px 8px}
+  .tile .n{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+  .tile .k{font-size:9.5px;color:var(--muted)}
+  .chips{display:flex;flex-wrap:wrap;gap:4px;padding:0 10px 6px}
+  .chip{font-size:10px;border:1px solid var(--border);border-radius:9px;padding:1px 8px;color:var(--muted)}
+  .chip b{color:var(--fg);font-variant-numeric:tabular-nums}
+  /* ---- 이슈 리스트 (끝단계: 정리된 목록) ---- */
+  .ty-badge{font-size:9px;font-weight:700;padding:0 5px;border-radius:3px;border:1px solid var(--accent);
+    color:var(--accent);text-transform:uppercase;white-space:nowrap}
+  .ty-badge.finding,.ty-badge.pattern{border-color:var(--muted);color:var(--muted)}
+  .ty-badge.issue{border-color:var(--bad);color:var(--bad)}
+  .ty-badge.initiative{border-color:var(--warn);color:var(--warn)}
+  .ty-badge.context{border-color:var(--ok);color:var(--ok)}
+  .issue-filter{display:flex;flex-wrap:wrap;gap:4px;padding:2px 10px 6px}
+  .issue-filter .fchip{font-size:10.5px;border:1px solid var(--border);border-radius:9px;padding:1px 9px;
+    color:var(--muted);cursor:pointer;background:var(--panel);white-space:nowrap}
+  .issue-filter .fchip b{font-variant-numeric:tabular-nums}
+  .issue-filter .fchip.on{color:#fff;background:var(--accent);border-color:var(--accent);font-weight:600}
+  .issue-filter .fchip.on b{color:#fff}
+  .issue-list{margin:0 10px}
+  .issue-item{display:flex;align-items:stretch;gap:8px;padding:6px 9px;border:1px solid var(--border);
+    border-radius:6px;background:var(--panel);margin-bottom:5px;cursor:pointer}
+  .issue-item:active,.issue-item:hover{background:var(--hover)}
+  .issue-item .ico{flex:none;width:4px;border-radius:2px;background:var(--muted)}
+  .issue-item .ico.issue{background:var(--bad)}.issue-item .ico.initiative{background:var(--warn)}
+  .issue-item .ico.context{background:var(--ok)}.issue-item .ico.case,.issue-item .ico.action{background:var(--accent)}
+  .issue-item .mid{flex:1;min-width:0}
+  .issue-item .it-h{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .issue-item .eid{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--accent)}
+  .issue-item .it-t{font-size:12.5px;font-weight:600;line-height:1.35;margin-top:1px;word-break:break-word}
+  .issue-item .it-s{font-size:10.5px;color:var(--muted);margin-top:1px;line-height:1.4;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .issue-item .chev{flex:none;align-self:center;color:var(--muted);font-size:16px}
+  /* ---- 이슈 상세 (끝단계: 세부 페이지) ---- */
+  .ent-detail{padding:8px 12px 24px}
+  .ent-back{font-size:11px;font-weight:600;color:var(--accent);cursor:pointer;border:1px solid var(--border);
+    border-radius:5px;background:var(--panel);padding:3px 8px;display:inline-block;margin-bottom:9px}
+  .ent-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .ent-head .eid{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--accent)}
+  .ent-title{font-size:16px;font-weight:700;line-height:1.3;margin:4px 0 6px;word-break:break-word}
+  .ent-sum{font-size:12.5px;line-height:1.5;margin-bottom:6px}
+  .ent-sec{margin-top:11px}
+  .ent-sec>h4{font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;
+    margin:0 0 4px;font-weight:700}
+  .ent-rel{display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--border);font-size:11.5px}
+  .ent-rel:last-child{border-bottom:none}
+  .ent-rel .rtype{font-family:var(--mono);font-size:10px;color:var(--muted);flex:none;min-width:78px}
+  .ent-rel .rdir{color:var(--muted);flex:none}
+  .ent-rel a{font-weight:600;min-width:0;word-break:break-word}
+  .ent-chips{display:flex;flex-wrap:wrap;gap:5px}
+  .ent-ctx{display:inline-flex;align-items:center;gap:3px;font-size:11px;border:1px solid var(--ok);
+    color:var(--ok);border-radius:9px;padding:1px 9px}
+  .ent-refs,.ent-kv{font-size:10.5px;color:var(--muted);font-family:var(--mono);word-break:break-all;line-height:1.5}
+  .ent-empty{color:var(--muted);font-size:11px;padding:2px 0}
+  /* PM 정형 필드 (공정·제품·과제·시작·진행·데드라인) */
+  .pm-row{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:2px;display:flex;flex-wrap:wrap;gap:2px 6px}
+  .pm-row b{color:var(--ok);font-weight:700}.pm-row b.late{color:var(--bad)}
+  .pm-grid{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:11.5px;align-items:baseline}
+  .pm-grid .pl{color:var(--muted);white-space:nowrap;font-size:10.5px}
+  .pm-grid .pv{word-break:break-word}.pm-grid .pv.dim{color:var(--muted)}
+  .pm-grid .pv b{color:var(--ok);font-weight:700}.pm-grid .pv b.late{color:var(--bad)}
+  .pm-grid .pv b.approx{color:var(--warn)}.pm-grid .pv b.unc{color:var(--bad)}
+  /* ---- 이슈 표 (PM 뷰: 끝단 표 형태) ---- */
+  #issueList .table-wrap{margin:6px 0}
+  table.issues{border-collapse:collapse;width:100%;font-size:11px}
+  table.issues th{font-size:9px;color:var(--muted);font-weight:600;text-align:left;padding:2px 4px;
+    border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--panel);white-space:nowrap;z-index:1}
+  table.issues td{padding:1px 4px;border-bottom:1px solid var(--border);vertical-align:middle;white-space:nowrap;
+    font-variant-numeric:tabular-nums}
+  table.issues tbody tr:last-child td{border-bottom:none}
+  table.issues tbody tr{cursor:pointer}
+  table.issues tbody tr:active,table.issues tbody tr:hover{background:var(--hover)}
+  table.issues td.iss-t{white-space:normal;min-width:148px;max-width:230px}
+  table.issues td.iss-t .t{font-weight:600;line-height:1.3;word-break:break-word}
+  table.issues td.iss-t .s{font-size:9px;color:var(--muted);font-family:var(--mono)}
+  table.issues td .dim{color:var(--muted)}
+  table.issues td .late{color:var(--bad);font-weight:700}
+  table.issues td .dday{color:var(--ok);font-weight:700}
+  /* 트리(nested) */
+  table.issues td.iss-t{display:flex;align-items:center;gap:3px}
+  .tw-indent{flex:none;display:inline-block}
+  /* 토글 = 유형 뱃지와 같은 칩 스타일, 내부만 ▸/▾ */
+  .tw-tog{flex:none;cursor:pointer;font-size:9px;font-weight:700;line-height:1.7;padding:0 4px;
+    border:1px solid var(--muted);border-radius:3px;color:var(--muted);background:var(--panel);user-select:none;white-space:nowrap}
+  .tw-tog:active{background:var(--sel)}
+  .tw-tog-sp{flex:none;width:17px}
+  .iss-tl{min-width:0}
+  table.issues td.iss-t .t{line-height:1.3}
+  table.issues td.iss-t .s{font-size:8.5px}
+  .dup-mark{color:var(--warn);font-weight:700;cursor:default}
+  table.issues tr.grp-row td{background:var(--bg);color:var(--muted);font-size:9.5px;font-weight:700;padding:3px 6px}
+  /* 상태·중요도 뱃지 */
+  .st-badge{font-size:9px;font-weight:700;padding:0 5px;border-radius:9px;white-space:nowrap}
+  .st-badge.st-prog{background:var(--accent);color:#fff}
+  .st-badge.st-closed{background:var(--ok);color:#fff}
+  .st-badge.st-reopen{background:var(--bad);color:#fff}
+  .st-badge.st-hold{border:1px solid var(--muted);color:var(--muted)}
+  .sev-badge{font-size:9px;font-weight:700;padding:0 5px;border-radius:3px;color:#fff;white-space:nowrap}
+  .sev-S1{background:#cf222e}.sev-S2{background:#b45309}.sev-S3{background:#9a6700}.sev-S4{background:#67717c}
+  /* 상세: 관계 그룹·시간 */
+  .rel-grp{margin-bottom:7px}
+  .rel-grp-h{font-size:10px;color:var(--muted);font-family:var(--mono);font-weight:700;margin:3px 0 1px}
+  .rel-grp-n{background:var(--chip);border-radius:8px;padding:0 5px;font-size:9px}
+  .rel-sub{font-weight:400;color:var(--muted);font-size:9.5px}
+  /* 관계 = 4열 그리드 (유형 최좌측 · 이름 왼쪽정렬 · 발생·전송 세로정렬) */
+  .rel-grid{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;column-gap:10px;row-gap:2px;align-items:baseline}
+  .rel-grid .r-hd{font-size:8.5px;color:var(--muted);font-weight:700;font-family:var(--mono)}
+  .rel-grid .r-dt{display:flex;align-items:baseline;gap:3px;white-space:nowrap}
+  .rel-grid .r-dt .rdir{flex:none;color:var(--muted)}
+  .rel-grid .r-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;font-size:11.5px}
+  .rel-grid .r-occ,.rel-grid .r-cap{font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .rel-grid .r-mk{display:inline-block;width:9px;text-align:center}
+  .rel-grid .mk-approx{color:var(--warn)}.rel-grid .mk-unc{color:var(--bad);font-weight:700}
+  /* 토스트 */
+  #toast{position:fixed;left:50%;bottom:calc(18px + var(--safe-bot));transform:translateX(-50%);
+    background:var(--fg);color:var(--bg);font-size:11.5px;padding:7px 14px;border-radius:8px;z-index:100;
+    opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+  #toast.show{opacity:.96}
+  /* 편집 */
+  .ent-edit-btn{margin-left:auto;font-size:10.5px;font-weight:600;border:1px solid var(--accent);background:var(--panel);
+    color:var(--accent);border-radius:5px;padding:2px 9px;cursor:pointer}
+  .ent-redo-btn{font-size:10.5px;font-weight:600;border:1px solid var(--warn);background:var(--panel);
+    color:var(--warn);border-radius:5px;padding:2px 9px;cursor:pointer}
+  .ent-redo-btn:active{background:var(--warn);color:#fff}
+  .ent-hide-btn{font-size:10.5px;font-weight:600;border:1px solid var(--border);background:var(--panel);
+    color:var(--muted);border-radius:5px;padding:2px 9px;cursor:pointer}
+  .ent-hide-btn:active{background:var(--chip)}
+  .ent-del-btn{font-size:10.5px;font-weight:600;border:1px solid var(--bad);background:var(--panel);
+    color:var(--bad);border-radius:5px;padding:2px 9px;cursor:pointer}
+  .ent-del-btn:active{background:var(--bad);color:#fff}
+  .tag-hidden{background:var(--chip);color:var(--muted)}
+  .ent-restore-btn{font-size:10.5px;font-weight:600;border:1px solid var(--ok);background:var(--panel);
+    color:var(--ok);border-radius:5px;padding:2px 9px;cursor:pointer}
+  .ent-restore-btn:active{background:var(--ok);color:#fff}
+  .issue-filter .fchip.tchip{border-style:dashed}
+  .issue-filter .fchip.tchip.on{background:var(--bad);border-color:var(--bad);color:#fff}
+  tr.trash-row .iss-tl .t{text-decoration:line-through;color:var(--muted)}
+  /* 자연어 작업 명령(삭제/숨김) 제안 — run 박스 */
+  .rb-ops{margin:6px 0;border:1px solid var(--warn);border-radius:7px;background:var(--bg);padding:6px 8px}
+  .rb-ops-h{font-size:10.5px;font-weight:700;color:var(--warn);margin-bottom:5px}
+  .rb-ops-sub{font-weight:400;color:var(--muted)}
+  .rb-op{border-top:1px dashed var(--border);padding:5px 0}
+  .rb-op:first-of-type{border-top:0}
+  .rb-op.rej{opacity:.5}
+  .rb-op-h{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .op-badge{font-size:10px;font-weight:700;border-radius:4px;padding:1px 7px;color:#fff}
+  .op-delete{background:var(--bad)} .op-hide{background:#7a6}
+  .op-tgt{font-family:var(--mono);font-size:10.5px;color:var(--accent);text-decoration:none}
+  .op-cf{font-size:9.5px;color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:0 5px}
+  .op-rev{margin-left:auto;display:flex;gap:3px}
+  .op-rev button{font-size:10px;border:1px solid var(--border);background:var(--panel);color:var(--muted);border-radius:4px;padding:1px 8px;cursor:pointer}
+  .op-rev .acc.on{background:var(--warn);border-color:var(--warn);color:#fff}
+  .op-rev .rej.on{background:var(--muted);border-color:var(--muted);color:#fff}
+  .op-ev{font-size:10px;color:var(--muted);margin-top:3px;font-style:italic}
+  /* 숨김 목록 표시 */
+  .issue-filter .fchip.hchip{border-style:dashed}
+  .issue-filter .fchip.hchip.on{background:var(--muted);border-color:var(--muted);color:#fff}
+  tr.row-hidden{opacity:.5}
+  tr.row-hidden .iss-tl .t{text-decoration:line-through}
+  .row-hide-mk{font-size:9px}
+  .ent-edit{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+  .edf{display:flex;flex-direction:column;gap:2px}
+  .edf>span{font-size:10px;color:var(--muted)}
+  .edf input,.edf textarea,.edf select{font:inherit;font-size:12px;background:var(--bg);color:var(--fg);
+    border:1px solid var(--border);border-radius:5px;padding:4px 7px;width:100%}
+  .edf textarea{min-height:44px;resize:vertical;line-height:1.4}
+  .edf-protected{font-size:10px;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:5px 8px;margin-top:2px}
+  .edf-actions{display:flex;gap:6px;margin-top:4px}
+  /* 원문 */
+  /* 검토 이력 */
+  .hist-list{display:flex;flex-direction:column}
+  .hist-row{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:8px;align-items:baseline;
+    font-size:10.5px;padding:2px 0;border-bottom:1px solid var(--border)}
+  .hist-row:last-child{border-bottom:none}
+  .hist-ts{font-family:var(--mono);font-size:9px;color:var(--muted);white-space:nowrap}
+  .hist-lbl{font-weight:700;white-space:nowrap}
+  .hist-lbl.h-commit{color:var(--accent)}.hist-lbl.h-merge{color:var(--warn)}.hist-lbl.h-retire{color:var(--bad)}
+  .hist-det{color:var(--muted);font-family:var(--mono);min-width:0;word-break:break-word}
+  .hist-actor{color:var(--muted);font-size:9px;white-space:nowrap}
+  .ent-raw-btn{font-size:11px;font-weight:600;border:1px solid var(--border);background:var(--panel);color:var(--accent);
+    border-radius:6px;padding:4px 12px;cursor:pointer}
+  .raw-src{margin-top:6px;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .raw-src .raw-h{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--accent);background:var(--bg);padding:3px 8px;border-bottom:1px solid var(--border)}
+  .raw-src pre{margin:0;padding:8px 9px;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.5;font-family:var(--mono);max-height:300px;overflow:auto;color:var(--fg)}
+  .raw-src+.raw-src{margin-top:10px}
+  .raw-src .raw-h{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
+  .raw-h .raw-idx{background:var(--accent);color:#fff;border-radius:4px;padding:0 5px;font-size:9px;font-weight:700}
+  .raw-h .raw-meta{font-family:var(--font,inherit);font-weight:400;color:var(--muted);font-size:9.5px}
+  .raw-count{font-size:10.5px;color:var(--muted);margin:4px 0 2px}
+  .raw-count b{color:var(--accent)}
+  /* ---- 프롬프트/엔진 (세트 = API + 시스템프롬프트 + 컨텍스트) ---- */
+  .eng-note{margin:8px 10px;padding:7px 9px;border:1px solid var(--border);border-left:3px solid var(--accent);
+    border-radius:0 6px 6px 0;background:var(--panel);font-size:11px;color:var(--muted);line-height:1.55}
+  .eng-pipe{display:flex;flex-wrap:wrap;align-items:center;gap:3px;padding:2px 10px 4px}
+  .eng-pipe .st{font-size:10px;border:1px solid var(--border);border-radius:5px;padding:1px 7px;background:var(--panel);white-space:nowrap}
+  .eng-pipe .st .k{font-size:8px;color:var(--muted);margin-left:3px;text-transform:uppercase}
+  .eng-pipe .st.llm{border-color:var(--accent);color:var(--accent);font-weight:600}
+  .eng-pipe .st.llm .k{color:var(--accent)}
+  .eng-pipe .st.human{border-color:var(--warn)}
+  .eng-pipe .arw{color:var(--muted);font-size:10px}
+  .eng-card{border:1px solid var(--border);border-radius:6px;background:var(--panel);margin:6px 10px;overflow:hidden}
+  .eng-card>.h{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 9px;border-bottom:1px solid var(--border)}
+  .eng-card .role{font-weight:700;font-size:12px}
+  .eng-card .arr{font-size:10px;color:var(--muted);margin-left:auto}
+  .eng-b{padding:7px 9px;font-size:11px}
+  .eng-kv{display:flex;gap:6px;font-size:10.5px;margin-bottom:2px}
+  .eng-kv .l{color:var(--muted);flex:none;min-width:50px}
+  .eng-kv .v{font-family:var(--mono);word-break:break-all}
+  .eng-sec-t{font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin:9px 0 3px}
+  .eng-card details{border:1px solid var(--border);border-radius:5px;margin:3px 0;background:var(--bg)}
+  .eng-card summary{cursor:pointer;padding:4px 8px;font-size:10.5px;color:var(--accent);font-weight:600;list-style:none}
+  .eng-card summary::-webkit-details-marker{display:none}
+  .eng-card summary::before{content:"▸ ";color:var(--muted)}
+  .eng-card details[open] summary::before{content:"▾ "}
+  .eng-card pre{margin:0;padding:7px 9px;border-top:1px solid var(--border);overflow-x:auto;font-size:10px;
+    line-height:1.5;font-family:var(--mono);white-space:pre-wrap;word-break:break-word;color:var(--fg)}
+  .eng-ctx{border:1px solid var(--border);border-radius:5px;padding:5px 8px;margin:4px 0;background:var(--bg)}
+  .eng-ctx .cn{font-weight:600;font-size:11px}
+  .eng-ctx .cd{font-size:10px;color:var(--muted);margin:1px 0 2px}
+  .eng-alias{display:inline-block;font-size:9.5px;font-family:var(--mono);background:var(--chip);border-radius:3px;padding:0 5px;margin:1px 2px 0 0}
+  .eng-stage{margin:9px 10px 0}
+  .eng-stage-h{font-size:11px;font-weight:700;color:var(--fg)}
+  .eng-stage-h .par{font-size:8.5px;color:var(--warn);border:1px solid var(--warn);border-radius:3px;padding:0 4px;margin-left:5px;font-weight:700}
+  .eng-stage-h .ser{font-size:8.5px;color:var(--muted);border:1px solid var(--border);border-radius:3px;padding:0 4px;margin-left:5px;font-weight:700}
+  .eng-stage-d{font-size:10px;color:var(--muted);margin:1px 0 3px}
+  .eng-stage .eng-card{margin:5px 0}
+  .eng-status{font-size:8.5px;font-weight:700;padding:0 5px;border-radius:3px;white-space:nowrap}
+  .eng-status.active{background:var(--ok);color:#fff;border:1px solid var(--ok)}
+  .eng-status.planned{border:1px solid var(--muted);color:var(--muted)}
+  /* 긴 시스템 프롬프트: 세로 스크롤 박스로 제한 */
+  .eng-prompt{max-height:168px;overflow:auto;margin:0;padding:7px 9px;border:1px solid var(--border);
+    border-radius:5px;background:var(--bg);font-size:10px;line-height:1.5;font-family:var(--mono);
+    white-space:pre-wrap;word-break:break-word;color:var(--fg)}
+  /* ---- 샘플 시나리오 (입력 하단, 탭하면 원문 등장) ---- */
+  .samples{padding:10px 10px 4px;border-top:1px solid var(--border);margin-top:10px}
+  .samples-h{font-size:11px;font-weight:700;margin-bottom:6px}
+  .samples-h span{font-weight:400;color:var(--muted);font-size:10px}
+  .samples-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:6px}
+  .sample-card{border:1px solid var(--border);border-radius:6px;background:var(--panel);padding:6px 8px;cursor:pointer}
+  .sample-card:active,.sample-card:hover{background:var(--hover)}
+  .sample-card.on{border-color:var(--accent);background:var(--sel)}
+  .sample-card .sc-h{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:3px}
+  .sample-card .fmt{font-size:8.5px;font-weight:700;border:1px solid var(--muted);color:var(--muted);border-radius:3px;padding:0 4px;white-space:nowrap}
+  .sample-card .kind{font-size:8.5px;font-weight:700;border-radius:3px;padding:0 4px;color:#fff;white-space:nowrap}
+  .sample-card .sc-t{font-size:10.5px;color:var(--fg);line-height:1.35}
+  .sample-view{margin-top:8px;border:1px solid var(--accent);border-radius:6px;background:var(--panel);overflow:hidden}
+  .sample-view .sv-h{display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+  .sample-view .sv-title{font-weight:600;font-size:11px;min-width:0}
+  .sample-view .sv-h button{margin-left:auto;font-size:10.5px;border:1px solid var(--accent);background:var(--accent);
+    color:#fff;border-radius:5px;padding:3px 10px;cursor:pointer;font-weight:600;white-space:nowrap}
+  .sample-view pre{margin:0;padding:8px 9px;white-space:pre-wrap;word-break:break-word;font-size:11px;
+    line-height:1.5;font-family:var(--mono);max-height:280px;overflow:auto;color:var(--fg)}
+  /* ---- run 히스토리 박스 (전송마다 누적, 독립 처리) ---- */
+  #runHistory{padding:0 10px}
+  .run-box{border:1px solid var(--border);border-radius:8px;background:var(--panel);margin:8px 0;overflow:hidden}
+  .run-box .rb-top{display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+  .run-box .rb-id{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--accent);white-space:nowrap}
+  .run-box .rb-src{flex:1;min-width:0;font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rb-status{font-size:8.5px;font-weight:700;padding:0 5px;border-radius:3px;white-space:nowrap}
+  .rb-status.running{background:var(--warn);color:#fff}
+  .rb-status.done{border:1px solid var(--accent);color:var(--accent)}
+  .rb-status.committed{background:var(--ok);color:#fff}
+  .rb-status.error{background:var(--bad);color:#fff}
+  /* 단계·시간 스트립 (박스 위, 실시간·작게) */
+  .rb-stages{display:flex;align-items:center;gap:3px;flex-wrap:wrap;padding:3px 8px;
+    border-bottom:1px solid var(--border);background:var(--bg);font-size:9.5px;color:var(--muted)}
+  .rb-stages .stg{border:1px solid var(--border);border-radius:3px;padding:0 5px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .rb-stages .stg.ok{border-color:var(--ok);color:var(--ok)}
+  .rb-stages .stg.run{border-color:var(--warn);color:var(--warn);font-weight:600}
+  .rb-stages .stg.err{border-color:var(--bad);color:var(--bad)}
+  .rb-stages .stg.wait{opacity:.7}
+  .rb-stages .stg b{font-weight:700}
+  .rb-stages .sarw{color:var(--muted);opacity:.6}
+  .rb-main{display:flex;align-items:stretch}
+  .rb-body{flex:1;min-width:0;padding:6px 8px}
+  .rb-run{font-size:11px;color:var(--muted);padding:4px 0}
+  .rb-run .rb-timer{color:var(--warn);font-weight:700;font-variant-numeric:tabular-nums}
+  .rb-err{font-size:11px;color:var(--bad);padding:4px 0;word-break:break-word}
+  .rb-meta{font-size:10px;color:var(--muted);margin-bottom:4px}
+  .rb-commit{flex:none;border-left:1px solid var(--border);display:flex;align-items:flex-start;padding:6px}
+  .rb-commit-btn{font:inherit;font-size:11px;font-weight:700;line-height:1.25;text-align:center;
+    background:var(--accent);color:#fff;border:1px solid var(--accent);border-radius:6px;padding:6px 10px;cursor:pointer}
+  .rb-commit-btn:disabled{opacity:.6;cursor:default}
+  .rb-done{font-size:10px;color:var(--ok);font-weight:700;text-align:center;line-height:1.3}
+  .rb-done span{font-weight:400;color:var(--muted)}
+  /* run 박스 원문·복기 */
+  .rb-src-btn{font-size:10px;font-weight:600;border:1px solid var(--border);background:var(--bg);color:var(--accent);
+    border-radius:4px;padding:0 6px;cursor:pointer;white-space:nowrap}
+  .run-raw .raw-src{margin-top:5px;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .run-raw .raw-h{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--accent);background:var(--bg);padding:3px 8px;border-bottom:1px solid var(--border)}
+  .run-raw pre{margin:0;padding:8px 9px;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.5;font-family:var(--mono);max-height:260px;overflow:auto;color:var(--fg)}
+  .rb-recap{margin-top:6px}
+  .rb-recap-tog{font-size:10.5px;font-weight:600;color:var(--muted);cursor:pointer;user-select:none}
+  .rb-recap-body{margin-top:4px;border-left:2px solid var(--border);padding-left:7px}
+  .recap-cand{display:flex;align-items:baseline;gap:5px;padding:2px 0;font-size:11px}
+  .recap-cand.rej{opacity:.5}
+  .recap-cand .recap-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .recap-dec{flex:none;font-size:9px;font-weight:700;padding:0 5px;border-radius:3px;white-space:nowrap}
+  .recap-dec.dec-accept{background:var(--ok);color:#fff}
+  .recap-dec.dec-edit{background:var(--accent);color:#fff}
+  .recap-dec.dec-merge{background:var(--warn);color:#fff}
+  .recap-dec.dec-reject{border:1px solid var(--bad);color:var(--bad)}
+  .rb-del{flex:none;border:1px solid var(--border);background:var(--bg);color:var(--muted);border-radius:4px;
+    width:20px;height:20px;line-height:1;font-size:13px;cursor:pointer;padding:0}
+  .rb-del:hover{border-color:var(--bad);color:var(--bad)}
+  .rb-actions{margin-top:6px}
+  .rb-retry{font:inherit;font-size:11px;font-weight:600;border:1px solid var(--accent);background:var(--panel);
+    color:var(--accent);border-radius:6px;padding:4px 12px;cursor:pointer}
+  .rb-retry:hover{background:var(--accent);color:#fff}
+  /* ---- 관련 기존 지식(RETRIEVE) · 병합 제안 · 재조정 ---- */
+  .rb-retrieved{font-size:10px;color:var(--muted);background:var(--bg);border:1px solid var(--border);
+    border-radius:5px;padding:4px 7px;margin-bottom:6px;line-height:1.8}
+  .rb-retrieved b{color:var(--accent)}
+  .rb-ret-chip{display:inline-block;font-family:var(--mono);font-size:9.5px;background:var(--chip);
+    border-radius:3px;padding:0 5px;margin:1px 2px 0 0;color:var(--fg)}
+  .cand-h .rev button.mrg.on{background:var(--warn);border-color:var(--warn);color:#fff}
+  .mrg-note{font-size:10px;color:var(--warn);font-weight:600;margin-top:2px}
+  .reconcile-bar{display:flex;align-items:center;gap:8px;padding:2px 10px 4px}
+  .reconcile-bar .btn{font-size:11px;padding:3px 10px}
+  #reconcileMsg{font-size:10.5px;color:var(--muted)}
+  #reconcilePanel{margin:0 10px}
+  .rec-item{display:flex;align-items:flex-start;gap:6px;border:1px solid var(--border);border-radius:5px;
+    background:var(--panel);padding:5px 8px;margin-bottom:4px;font-size:11px}
+  .rec-item input{margin-top:2px;flex:none}
+  .rec-item .rec-rel{font-family:var(--mono);font-size:10.5px}
+  .rec-item .rec-reason{font-size:9.5px;color:var(--muted);margin-top:1px}
+  .rec-apply{margin:5px 0 8px;font-size:11px;padding:4px 12px}
+  #dedupPanel{margin:0 10px}
+  .ded-mem{display:flex;align-items:center;gap:5px;font-size:10.5px;padding:1px 0}
+  .ded-mem input{flex:none}
+  .rec-item select{font:inherit;font-size:10.5px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:1px 4px;max-width:100%}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <h1><a href="#" id="homeLink">issue</a> <span style="font-weight:400;color:var(--muted);font-size:11px">이슈 지식 시스템</span></h1>
+  <div class="topbar-meta" id="topbarMeta"></div>
+</header>
+<nav class="tabbar" id="tabbar">
+  <a href="#run" data-tab="run">입력</a>
+  <a href="#eng" data-tab="eng">프롬프트</a>
+  <a href="#docs" data-tab="docs">문서</a>
+  <a href="#know" data-tab="know">이슈</a>
+</nav>
+<div class="toolbar" id="docToolbar">
+  <span class="back-link" id="btnBack" hidden>‹ 목록</span>
+  <input class="search" id="q" type="search" placeholder="전체 문서 검색 (초성 지원: ㅂㅈ ㅇㅅ)" autocomplete="off">
+  <span class="crumb-doc" id="crumbDoc"></span>
+</div>
+<main>
+  <section class="screen" id="scrList">
+    <div class="table-wrap"><table class="docs">
+      <thead><tr><th>ID</th><th>문서</th><th class="dst">상태</th><th>갱신</th><th class="num">줄</th></tr></thead>
+      <tbody id="docRows"></tbody>
+    </table></div>
+  </section>
+  <section class="screen" id="scrDoc" hidden>
+    <nav class="tocbar" id="tocbar"></nav>
+    <div class="docmeta" id="docMeta"></div>
+    <article id="docBody"></article>
+  </section>
+  <section class="screen" id="scrSearch" hidden></section>
+  <section class="screen" id="scrRun" hidden>
+    <div class="run-pane">
+      <div class="run-in">
+        <textarea id="runText" placeholder="메일·메신저·회의록 등 원문을 그대로 붙여넣으세요. 채널이 여럿이어도 한 곳에 몰아넣습니다. (capture-first: 저장은 무조건, 추출·검토는 이 화면에서)"></textarea>
+        <div class="run-ctl">
+          <button class="btn primary" id="btnExtract">추출 (전송)</button>
+          <span class="runmsg" id="runMsg"></span>
+        </div><!-- 채널 수동 선택 제거 — 한 원문에 메일·메신저·컨플 회의록이 섞일 수 있어
+             출처 판정은 EXTRACT의 LLM(source_profile: channels[] 다중분류 + category)이 수행 -->
+      </div>
+      <div id="runHistory"></div>
+      <div class="samples" id="samples">
+        <div class="samples-h">샘플 시나리오 <span>탭하면 원문이 나타납니다 · 복사하거나 “입력란에 넣기”</span></div>
+        <div class="samples-grid" id="samplesGrid"></div>
+        <div class="samples-h" style="margin-top:11px">ESD 이슈 생애주기 시퀀스 <span>①→⑦ 순서로 전송해 end-to-end 테스트</span></div>
+        <div class="samples-grid" id="seqGrid"></div>
+        <div class="sample-view" id="sampleView" hidden></div>
+      </div>
+    </div>
+  </section>
+  <section class="screen" id="scrKnow" hidden>
+    <div class="tiles" id="knowTiles"></div>
+    <div class="reconcile-bar">
+      <button class="btn" id="btnReconcile">재조정 실행</button>
+      <button class="btn" id="btnDedup">중복 병합</button>
+      <button class="btn" id="btnRebuild" title="이벤트 로그로부터 projection 재생성 — 정합성 점검·복구(비파괴·멱등)">🔧 저장소 점검</button>
+      <span id="reconcileMsg">재조정=잇기(링크) · 중복 병합=합치기(개수↓)</span>
+    </div>
+    <div id="reconcilePanel"></div>
+    <div id="dedupPanel"></div>
+    <div class="issue-filter" id="issueFilter"></div>
+    <div class="issue-list" id="issueList"></div>
+  </section>
+  <section class="screen" id="scrEnt" hidden>
+    <div class="ent-detail" id="entDetail"></div>
+  </section>
+  <section class="screen" id="scrEng" hidden>
+    <div class="eng-note" id="engNote"></div>
+    <div class="eng-pipe" id="engPipe"></div>
+    <div id="engList"></div>
+  </section>
+  <footer>run #0 — 이 시스템은 자기 자신의 방법론으로 만들어진다 (M2 원칙 0)</footer>
+</main>
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const state={docs:[],bodies:{},cur:null,pendingHl:null,runs:[]};
+
+/* ---------- 초성 (서재 관례) ---------- */
+const CHO=['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+function cho(s){let r='';for(const c of s){const x=c.charCodeAt(0);
+  r+=(x>=0xAC00&&x<=0xD7A3)?CHO[Math.floor((x-0xAC00)/588)]:c;}return r;}
+
+/* ---------- fetch ---------- */
+async function api(p){const r=await fetch(p);if(!r.ok)throw new Error("HTTP "+r.status);return r.json();}
+async function loadManifest(){
+  const j=await api("api/docs");state.docs=j.docs||[];state.skipped=j.skipped||[];
+  renderMeta();renderList();
+}
+async function getDoc(id){
+  if(state.bodies[id])return state.bodies[id];
+  const j=await api("api/doc?id="+encodeURIComponent(id));
+  state.bodies[id]=j;return j;
+}
+
+/* ---------- markdown (최소 렌더러) ---------- */
+function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+// 속성 컨텍스트: 따옴표까지 이스케이프 (속성 경계 파괴/주입 차단)
+function escAttr(s){return esc(s).replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
+// href 안전 스킴만 허용 (javascript:/data: 등 차단)
+function safeUrl(u){return /^(#|\/|https?:|mailto:|[A-Za-z0-9_-]+$)/.test(String(u).trim())?u:"#";}
+function inline(s){
+  const codes=[];
+  s=s.replace(/`([^`]+)`/g,(_,c)=>{codes.push(c);return "\u0000"+(codes.length-1)+"\u0000";});
+  s=esc(s);
+  s=s.replace(/\*\*([^*]+)\*\*/g,"<b>$1</b>");
+  // 경계 문자 클래스에 한글 포함 — 한글 인접 리터럴 별표 오탐 방지
+  s=s.replace(/(^|[^*\w가-힣])\*([^*\n]+)\*(?![\w가-힣])/g,"$1<i>$2</i>");
+  s=s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,(_,t,u)=>'<a href="'+escAttr(safeUrl(u))+'" data-lnk="1">'+t+"</a>");
+  s=s.replace(/\u0000(\d+)\u0000/g,(_,i)=>"<code>"+esc(codes[+i])+"</code>");
+  return s;
+}
+function renderMd(src){
+  const out=[];const lines=src.split("\n");let i=0;let h2s=[];let hid=0;
+  const flushP=buf=>{if(buf.length){out.push("<p>"+buf.map(inline).join("<br>")+"</p>");buf.length=0;}};
+  let pbuf=[];
+  while(i<lines.length){
+    const ln=lines[i];
+    const t=ln.trim();
+    if(t.startsWith("```")){flushP(pbuf);const code=[];i++;
+      while(i<lines.length&&!lines[i].trim().startsWith("```")){code.push(lines[i]);i++;}
+      i++;out.push("<pre><code>"+esc(code.join("\n"))+"</code></pre>");continue;}
+    if(t.startsWith("<svg")){flushP(pbuf);const svg=[ln];
+      while(i<lines.length&&!lines[i].includes("</svg>")){i++;if(i<lines.length)svg.push(lines[i]);}
+      i++;
+      // renderMd는 신뢰 문서(docs)에만 쓴다(비신뢰 source_text는 <pre>로 escape). 방어적으로
+      // <script>와 따옴표친 이벤트핸들러(onload="…")만 제거(BG-17). 텍스트('online = 5' 등) 오손상
+      // 방지로 무따옴표·광역 javascript: 치환은 제외 — 완전 sanitize는 아키텍처 단계 DOMPurify.
+      const svgSafe=svg.join("\n").replace(/<script[\s\S]*?<\/script>/gi,"")
+        .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*')/gi,"");
+      out.push(svgSafe);continue;}
+    const hm=t.match(/^(#{1,4})\s+(.*)$/);
+    if(hm){flushP(pbuf);const lv=hm[1].length;const id="h"+(hid++);
+      if(lv===2)h2s.push({id,text:hm[2].replace(/[*`\[\]]/g,"")});
+      out.push(`<h${lv} id="${id}">`+inline(hm[2])+`</h${lv}>`);i++;continue;}
+    if(/^---+$/.test(t)){flushP(pbuf);out.push("<hr>");i++;continue;}
+    if(t.startsWith(">")){flushP(pbuf);const q=[];
+      while(i<lines.length&&lines[i].trim().startsWith(">")){q.push(lines[i].trim().replace(/^>\s?/,""));i++;}
+      out.push("<blockquote>"+q.map(x=>x?"<p>"+inline(x)+"</p>":"").join("")+"</blockquote>");continue;}
+    if(t.startsWith("|")){flushP(pbuf);const rows=[];
+      while(i<lines.length&&lines[i].trim().startsWith("|")){rows.push(lines[i].trim());i++;}
+      const cells=r=>r.replace(/^\||\|$/g,"").split("|").map(c=>c.trim());
+      let html="<table>";let start=0;
+      if(rows.length>1&&/^\|?[\s:|-]+\|?$/.test(rows[1])){
+        html+="<thead><tr>"+cells(rows[0]).map(c=>"<th>"+inline(c)+"</th>").join("")+"</tr></thead>";start=2;}
+      html+="<tbody>";
+      // 헤더 구분행은 start=2로 이미 건너뜀. 본문에서 대시(-)만인 데이터 행을 삭제하지 않는다.
+      for(let r=start;r<rows.length;r++){
+        html+="<tr>"+cells(rows[r]).map(c=>"<td>"+inline(c)+"</td>").join("")+"</tr>";}
+      html+="</tbody></table>";out.push(html);continue;}
+    const lm=ln.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
+    if(lm){flushP(pbuf);const items=[];
+      while(i<lines.length){
+        const m2=lines[i].match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
+        if(!m2)break;items.push({ind:m2[1].length,ord:/\d/.test(m2[2]),txt:m2[3]});i++;}
+      const ord=items[0].ord;let html=ord?"<ol>":"<ul>";let subOpen=false;
+      for(let k=0;k<items.length;k++){const it=items[k];
+        if(it.ind>=2&&k>0){if(!subOpen){html+=(it.ord?"<ol>":"<ul>");subOpen=it.ord?"ol":"ul";}
+          html+="<li>"+inline(it.txt)+"</li>";}
+        else{if(subOpen){html+="</"+subOpen+">";subOpen=false;}
+          if(k>0)html+="</li>";html+="<li>"+inline(it.txt);}}
+      if(subOpen)html+="</"+subOpen+">";html+="</li>"+(ord?"</ol>":"</ul>");
+      out.push(html);continue;}
+    if(t===""){flushP(pbuf);i++;continue;}
+    pbuf.push(ln);i++;
+  }
+  flushP(pbuf);
+  return {html:out.join("\n"),h2s};
+}
+
+/* ---------- views ---------- */
+function fmtKB(n){return (n/1024).toFixed(1)+"KB";}
+function renderMeta(){
+  const d=state.docs;const lines=d.reduce((a,x)=>a+(+x.lines||0),0);
+  const size=d.reduce((a,x)=>a+(+x.size||0),0);
+  const upd=d.map(x=>x.updated||"").sort().pop()||"-";
+  $("#topbarMeta").innerHTML=`문서 ${d.length} · ${lines.toLocaleString()}줄 · ${fmtKB(size)} · ${upd}`+
+    ((state.skipped||[]).length?` · <span style="color:var(--bad)">읽기실패 ${state.skipped.length} (E-1003)</span>`:"");
+}
+function ageClass(updated){
+  const uniq=[...new Set(state.docs.map(x=>x.updated||""))].sort().reverse();
+  return "age-"+Math.min(uniq.indexOf(updated||""),4);
+}
+function tagHtml(meta){
+  const st=meta.status||"?";
+  // class 토큰은 안전 문자만, 표시 텍스트/속성은 이스케이프
+  const stCls=st.replace(/[^A-Za-z0-9_-]/g,"");
+  return `<span class="tag st-${stCls}">${esc(st)}</span>`+
+    (meta.audience?` <span class="tag">${esc(meta.audience)}</span>`:"");
+}
+function renderList(){
+  $("#docRows").innerHTML=state.docs.map(m=>
+    `<tr data-doc="${escAttr(m.id)}"><td class="did">${esc(m.id)}</td>`+
+    `<td class="dtitle"><div class="t">${esc(m.title||m.file)}</div><div class="s">${esc(m.summary||"")}</div></td>`+
+    `<td class="dst">${tagHtml(m)}</td>`+
+    `<td class="dupd ${ageClass(m.updated)}">${esc(m.updated||"")}</td>`+
+    `<td class="num">${esc(m.lines)}</td></tr>`).join("")
+    ||'<tr><td colspan="5" class="empty">docs/*.md 없음</td></tr>';
+}
+async function openDoc(id,hl){
+  let j;try{j=await getDoc(id);}catch(e){alert("문서 로드 실패: "+e.message);return;}
+  state.cur=id;
+  const {html,h2s}=renderMd(j.content);
+  $("#docBody").innerHTML=html;
+  $("#docMeta").innerHTML=`<b style="color:var(--accent);font-family:var(--mono)">${esc(j.meta.id)}</b> ${tagHtml(j.meta)}`+
+    `<span>${j.meta.updated||""}</span><span>${j.meta.lines}줄 · ${fmtKB(+j.meta.size||0)}</span>`;
+  $("#tocbar").innerHTML=h2s.map(h=>`<a href="#" data-toc="${h.id}">${esc(h.text)}</a>`).join("");
+  $("#crumbDoc").textContent=`${j.meta.id} ${j.meta.title||""}`;
+  show("doc");
+  window.scrollTo(0,0);
+  if(hl)setTimeout(()=>flashText(hl),60);
+}
+function flashText(q){
+  const walker=document.createTreeWalker($("#docBody"),NodeFilter.SHOW_TEXT);
+  const ql=q.toLowerCase();const isCho=/^[ㄱ-ㅎ\s]+$/.test(q);let node;
+  while((node=walker.nextNode())){
+    const hay=isCho?cho(node.nodeValue):node.nodeValue.toLowerCase();
+    if(hay.includes(ql)){
+      const el=node.parentElement;el.classList.add("hlflash");
+      el.scrollIntoView({block:"center"});
+      setTimeout(()=>el.classList.remove("hlflash"),1600);return;}
+  }
+}
+function show(which){
+  $("#scrList").hidden=which!=="list";
+  $("#scrDoc").hidden=which!=="doc";
+  $("#scrSearch").hidden=which!=="search";
+  $("#btnBack").hidden=which==="list";
+  if(which!=="doc")$("#crumbDoc").textContent="";
+  if(which==="list")state.cur=null;
+}
+
+/* ---------- 검색 (일반 + 초성) ---------- */
+let qTimer=null;
+async function runSearch(q){
+  if(!q){$("#q").value="";
+    if(state.cur)openDoc(state.cur);else show("list");return;}
+  show("search");$("#btnBack").hidden=false;
+  const el=$("#scrSearch");
+  if(q.length<2){el.innerHTML='<div class="empty">2자 이상 입력</div>';return;}
+  for(const m of state.docs){if(!state.bodies[m.id]){try{await getDoc(m.id);}catch(e){}}}
+  const isCho=/^[ㄱ-ㅎ\s]+$/.test(q);
+  const ql=isCho?q:q.toLowerCase();
+  const hits=[];
+  for(const m of state.docs){
+    const b=state.bodies[m.id];if(!b)continue;
+    const lines=b.content.split("\n");let cnt=0;
+    for(const ln of lines){
+      const hay=isCho?cho(ln):ln.toLowerCase();
+      const idx=hay.indexOf(ql);
+      if(idx>=0){
+        hits.push({id:m.id,title:m.title,line:ln.trim(),idx:Math.max(0,ln.length-ln.trimStart().length?idx-(ln.length-ln.trimStart().length):idx),q});
+        if(++cnt>=5)break;}
+    }
+  }
+  el.innerHTML=hits.length?hits.map(h=>{
+    const line=h.line;const hay=isCho?cho(line):line.toLowerCase();
+    const idx=Math.max(0,hay.indexOf(ql));
+    const pre=esc(line.slice(Math.max(0,idx-28),idx)),mid=esc(line.slice(idx,idx+q.length)),
+          post=esc(line.slice(idx+q.length,idx+q.length+64));
+    return `<a class="hit" href="#" data-hit="${escAttr(h.id)}" data-q="${escAttr(q)}">`+
+      `<div class="d">${esc(h.id)} <span style="color:var(--muted);font-weight:400">${esc(h.title||"")}</span></div>`+
+      `<div class="l">${pre}<mark>${mid}</mark>${post}</div></a>`;
+  }).join("")+`<div class="empty">${hits.length}건</div>`:'<div class="empty">결과 없음</div>';
+}
+
+/* ---------- 입력·실행 (CAPTURE→EXTRACT→REVIEW→COMMIT) ---------- */
+const ETYPES=["case","issue","finding","initiative","action","pattern","context"];
+async function apiPost(body){
+  const r=await fetch("api/workflow/step",{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({error:"HTTP "+r.status}));
+  if(!r.ok)throw Object.assign(new Error(j.error||("HTTP "+r.status)),{code:j.code});
+  return j;
+}
+function setRunMsg(m,err){$("#runMsg").innerHTML=err?`<span class="err">${esc(m)}</span>`:esc(m);}
+function toast(msg){let t=document.getElementById("toast");
+  if(!t){t=document.createElement("div");t.id="toast";document.body.appendChild(t);}
+  t.textContent=msg;t.className="show";clearTimeout(t._h);t._h=setTimeout(()=>{t.className="";},3500);}
+function runBusy(b){$("#btnExtract").disabled=b;}
+/* ---------- 샘플 시나리오 (입력 하단 grid, 탭하면 원문 등장) ---------- */
+const SAMPLES=[
+ {fmt:"메신저",kind:"별 문제없음",color:"#1a7f37",title:"N7 GPIO-A 재검증 clean 통과",
+  text:`[사내 메신저 · 알파과제 채널]
+김선임: N7 알파과제 GPIO-A ESD 재검증 결과 나왔나요?
+이책임: 방금 확인했어요. rule deck v1.2로 다시 돌렸고 clamp spacing 포함 전부 clean 통과입니다.
+김선임: 오 좋네요. 그럼 특이사항 없는 거죠?
+이책임: 넵 이슈 없습니다. 다음 마일스톤 그대로 가면 됩니다.`},
+ {fmt:"메일",kind:"이슈인지 애매함",color:"#9a6700",title:"N5 CLK-PLL latch-up 마진 문의",
+  text:`제목: [공유/문의] N5 CLK-PLL latch-up 마진 관련
+보낸사람: 설계팀 박책임
+
+안녕하세요. N5 CLK-PLL 관련 하나 여쭙니다.
+최근 시뮬에서 latch-up 마진이 예전보다 조금 낮아 보인다는 얘기가 있었는데,
+측정한 건 아니고 감으로 느낀 정도입니다.
+공정 리비전이 바뀐 영향인지 시뮬 셋업 문제인지 확실치 않습니다.
+비슷한 사례가 있었는지, 더 봐야 할지 의견 부탁드립니다.`},
+ {fmt:"회의록",kind:"이슈사항",color:"#cf222e",title:"N7 GPIO-B ESD 사인오프 충돌",
+  text:`제목: N7 MPW3 GPIO-B ESD 사인오프 이슈
+채널: 2026-07-11 알파과제 QA 주간회의
+
+- GPIO-B ESD IP 3.0은 rule deck v1.1 기준으로 검증 완료.
+- 그러나 사인오프 기준은 v1.3이며, v1.3 신규 latch-up 규칙과 IP 구조가 충돌.
+- 이대로면 사인오프 불가. waive 또는 IP 수정 중 결정 필요.
+- 착수 2026-07-06, 사인오프 데드라인 2026-07-24.
+- 담당: ESD QA. 조치: v1.3 규칙 적용 가부 판단 후 waive 신청 검토.`},
+ {fmt:"속보",kind:"불량보고",color:"#a40e26",title:"GPIO-A 고객 ORT ESD 실패 2건",
+  text:`[속보] N7 알파과제 GPIO-A, 고객 ORT에서 ESD 실패 2건 발생 (HBM 2kV fail). 로트 A123, 오늘 오전 확인.`},
+ {fmt:"메일",kind:"불량원인보고",color:"#6941c6",title:"GPIO-A HBM fail 원인 분석",
+  text:`제목: [원인분석] N7 GPIO-A ESD HBM fail 원인 보고
+보낸사람: ESD QA 정선임
+
+지난주 보고된 GPIO-A HBM 2kV fail(로트 A123) 원인 분석 결과입니다.
+- 근본원인: clamp 소자 배치가 rule deck v1.2 신규 clamp spacing 규칙을 위반. 실리콘에서 spacing 부족으로 ESD 전류경로 저항이 증가.
+- 유입경로: IP 2.1은 v0.9 기준으로 released 되어 v1.2 신규 규칙 미반영 상태로 사인오프됨(버전 불일치).
+- 조치: IP 2.2에서 clamp spacing 수정, 알파·베타과제 공통 적용. 재검증 데드라인 2026-07-30.
+- 재발방지: released IP 목록과 사인오프 rule deck 버전 자동 대조 체크 추가 제안.`},
+ {fmt:"회의록",kind:"QA이슈",color:"#2563eb",title:"릴리스 rule deck 버전관리 프로세스",
+  text:`제목: [QA] 릴리스 rule deck 버전 관리 프로세스 이슈
+채널: 2026-07-12 라이브러리팀 QA 정기회의
+
+- 최근 GPIO-A 불량이 released IP와 사인오프 rule deck 버전 불일치에서 비롯됨.
+- 문제: 과제별 rule deck 버전이 제각각인데, released IP가 어느 버전으로 검증됐는지 추적하는 표준 절차가 없음.
+- 병렬 개발(알파·베타·감마 과제)에서 이 불일치가 구조적으로 반복될 위험.
+- 제안: 기준정보(PDK 버전·released IP 목록)에 '검증 rule deck 버전' 필드 필수화 + 사인오프 게이트 자동 검증.
+- 담당: QA 프로세스 TF. 목표: 2026-08-15 파일럿.`},
+];
+// ESD 이슈 생애주기 시퀀스 (①→⑦ 순서 전송 시 하나의 이슈가 진화 → 온톨로지 누적/연결)
+const SEQ=[
+ {fmt:"메일",kind:"①일상 메일",color:"#67717c",title:"알파과제 주간 진행 현황 (특이사항 없음)",
+  text:`제목: [주간공유] 알파과제 7월 2주차 진행 현황
+보낸사람: 알파과제 PL
+
+이번 주 알파과제(N7, GPIO-A) 진행은 계획대로입니다.
+ESD 재검증 일정도 예정대로 진행 중이고 특이사항 없습니다.
+다음 주 사인오프 리허설 준비하겠습니다.`},
+ {fmt:"메일",kind:"②성능저하(fail아님)",color:"#9a6700",title:"N7 GPIO-A HBM 마진 하락 경향",
+  text:`제목: [공유] N7 GPIO-A HBM 마진 하락 경향
+보낸사람: ESD QA
+
+최근 N7 GPIO-A의 HBM 특성이 이전 2.5kV에서 2.1kV로 낮아지는 경향이 관찰됩니다.
+아직 스펙(2kV)은 만족하므로 fail은 아니지만, 하락 추세가 있어 모니터링이 필요해 보입니다.
+원인은 아직 불명확합니다.`},
+ {fmt:"속보",kind:"③fail 발생",color:"#cf222e",title:"GPIO-A 고객 ORT HBM 2kV fail 2건",
+  text:`[속보] N7 알파과제 GPIO-A, 고객 ORT에서 HBM 2kV fail 2건 발생. 로트 A123, 오늘 오전 확인. 스펙 미달로 정식 불량 처리 필요.`},
+ {fmt:"회의록",kind:"④원인 탐색 loop",color:"#b45309",title:"ESD fail 원인 조사 착수 (가설 3종)",
+  text:`제목: N7 GPIO-A ESD fail 원인 조사 착수
+채널: 2026-07-14 긴급 QA회의
+
+- GPIO-A HBM fail(로트 A123) 원인 조사 시작.
+- 가설: (1) clamp 소자 배치 문제 (2) 공정 리비전 드리프트 (3) rule deck 버전 불일치.
+- 아직 확정된 원인 없음. 가설별 데이터 수집 담당 배정.
+- clamp 레이아웃 재검토, 공정 SPC 확인, released rule 버전 대조 예정.`},
+ {fmt:"메일",kind:"⑤원인발견·해결시도",color:"#6941c6",title:"근본원인 확인 → IP 2.2 수정 착수",
+  text:`제목: [원인분석] GPIO-A ESD fail 근본원인 확인
+보낸사람: ESD QA
+
+조사 결과 근본원인을 확인했습니다.
+clamp 소자 spacing이 rule deck v1.2의 신규 clamp spacing 규칙을 위반, 실리콘에서 spacing 부족으로 ESD 경로 저항이 증가해 fail로 이어졌습니다.
+IP 2.1이 v0.9 기준으로 released되어 v1.2 규칙이 미반영된 상태였습니다.
+현재 IP 2.2에서 clamp spacing 수정 작업을 진행 중입니다.`},
+ {fmt:"회의록",kind:"⑥해결·재발방지",color:"#0891b2",title:"해결책 검증 + 재발방지 대책 수립",
+  text:`제목: GPIO-A ESD 해결책 및 재발방지 대책
+채널: 2026-07-20 QA 대책회의
+
+- 해결책: IP 2.2에서 clamp spacing 수정 완료, HBM 2.6kV로 재검증 통과. 알파·베타과제 공통 적용.
+- 재발방지: released IP 목록에 '검증 rule deck 버전' 필드 필수화, 사인오프 게이트에서 IP-rule 버전 자동 대조 도입.
+- 프로세스 반영 데드라인: 2026-08-15.`},
+ {fmt:"메일",kind:"⑦종결",color:"#1a7f37",title:"GPIO-A ESD fail 이슈 클로즈",
+  text:`제목: [종결] N7 GPIO-A ESD fail 이슈 클로즈
+보낸사람: 알파과제 PL
+
+GPIO-A ESD HBM fail 이슈는 IP 2.2 적용 및 재검증 통과로 종결합니다.
+재발방지 대책(버전 자동 대조)도 프로세스에 반영 완료했습니다.
+사인오프 정상 진행. 관련자분들 수고하셨습니다.`},
+];
+function sampleCardHtml(s,grp,i){
+  return `<div class="sample-card" data-grp="${grp}" data-i="${i}"><div class="sc-h"><span class="fmt">${esc(s.fmt)}</span>`+
+    `<span class="kind" style="background:${s.color}">${esc(s.kind)}</span></div><div class="sc-t">${esc(s.title)}</div></div>`;
+}
+function renderSamples(){
+  $("#samplesGrid").innerHTML=SAMPLES.map((s,i)=>sampleCardHtml(s,'s',i)).join("");
+  $("#seqGrid").innerHTML=SEQ.map((s,i)=>sampleCardHtml(s,'q',i)).join("");
+}
+function showSampleItem(grp,i){
+  const s=(grp==='q'?SEQ:SAMPLES)[i];if(!s)return;
+  document.querySelectorAll('.sample-card').forEach(c=>c.classList.toggle('on',c.dataset.grp===grp&&+c.dataset.i===i));
+  state._sample=s;
+  const v=$("#sampleView");v.hidden=false;
+  v.innerHTML=`<div class="sv-h"><span class="sv-title">[${esc(s.fmt)} · ${esc(s.kind)}] ${esc(s.title)}</span>`+
+    `<button data-fill="1">입력란에 넣기</button></div><pre>${esc(s.text)}</pre>`;
+  v.scrollIntoView({block:"nearest"});
+}
+function fillSample(){
+  const s=state._sample;if(!s)return;
+  $("#runText").value=s.text;$("#runText").focus();
+  window.scrollTo({top:0,behavior:"smooth"});
+  setRunMsg("샘플을 입력란에 넣었습니다. ‘추출(전송)’을 눌러보세요.");
+}
+/* ---------- 다중 run 히스토리 (입력 set은 전송 즉시 초기화, 각 run 독립 처리·확정) ---------- */
+const LS_RUNS="issue.runs";
+function findRun(id){return (state.runs||[]).find(r=>r.runId===id);}
+// LLM이 merge_into를 제안하면 검토 기본값을 '병합'으로 (accept로 두면 중복 새로 생김)
+function defaultRv(e){return e&&e.merge_into?{review:"merge",merge_into:e.merge_into}:{review:"accept"};}
+function snippet(t){t=String(t).replace(/\s+/g," ").trim();return t.length>52?t.slice(0,52)+"…":t;}
+function saveRuns(){try{localStorage.setItem(LS_RUNS,JSON.stringify((state.runs||[]).map(r=>({
+  runId:r.runId,sourceId:r.sourceId,snippet:r.snippet,status:r.status,
+  reviews:r.reviews,committed:r.committed,commitMsg:r.commitMsg,startedAt:r.startedAt}))));}catch(e){}}
+function loadRunsLS(){try{return JSON.parse(localStorage.getItem(LS_RUNS)||"[]")||[];}catch(e){return[];}}
+
+// 전송: CAPTURE → 히스토리 박스 즉시 생성 → 입력 set 초기화 → EXTRACT 비동기 발사·독립 폴링
+async function doSubmit(){
+  const text=$("#runText").value.trim();
+  if(!text){setRunMsg("입력이 비어 있습니다",true);return;}
+  const run=await submitText(text);
+  if(run){$("#runText").value="";try{$("#runText").focus();}catch(e){}}   // 성공 시에만 입력 초기화
+}
+// 주어진 텍스트를 전송(CAPTURE→히스토리 박스→EXTRACT 폴링). doSubmit·재추출 공용. 반환 run|null.
+async function submitText(text,firstCapturedAt){
+  text=(text||"").trim();if(!text)return null;
+  $("#btnExtract").disabled=true;setRunMsg("전송 중…");
+  let cap;const capInput={text};if(firstCapturedAt)capInput.first_captured_at=firstCapturedAt;
+  try{cap=await apiPost({step:"CAPTURE",input:capInput});}
+  catch(e){setRunMsg((e.code?e.code+" ":"")+e.message,true);$("#btnExtract").disabled=false;return null;}
+  const run={runId:cap.run_id,sourceId:cap.result.source_id,snippet:snippet(text),
+    status:"running",proposal:null,reviews:{},committed:false,error:null,
+    startedAt:(cap.result.source&&cap.result.source.captured_at)||null,_t0:Date.now()};
+  (state.runs=state.runs||[]).unshift(run);renderHistory();saveRuns();
+  $("#btnExtract").disabled=false;setRunMsg(run.runId+" 전송됨 · 처리 시작 (계속 입력 가능)");
+  try{
+    const ext=await apiPost({step:"EXTRACT",run_id:run.runId,input:{source_id:run.sourceId}});
+    run.runId=ext.run_id||run.runId;pollRunBox(run);
+  }catch(e){run.status="error";run.error=(e.code?e.code+" ":"")+e.message;updateRunBox(run);saveRuns();}
+  return run;
+}
+// 기존 수집을 그대로 재추출 — CAPTURE 없이 원본 source로 직접 EXTRACT.
+// 새 수집을 만들지 않으므로 수집이 합쳐지지 않고, 원본 captured_at(수집 시각)도 보존된다.
+async function reExtractExisting(sourceId){
+  let j;try{j=await api("api/source_text?id="+encodeURIComponent(sourceId));}catch(e){j={};}
+  let ext;
+  try{ext=await apiPost({step:"EXTRACT",input:{source_id:sourceId}});}   // 새 run_id 발급, 기존 소스 대상
+  catch(e){toast("재추출 실패("+sourceId+"): "+(e.code?e.code+" ":"")+e.message);return null;}
+  const run={runId:ext.run_id,sourceId,snippet:snippet(j.text||sourceId),
+    status:"running",proposal:null,reviews:{},committed:false,error:null,
+    startedAt:(j.meta&&j.meta.captured_at)||null,_t0:Date.now()};
+  (state.runs=state.runs||[]).unshift(run);renderHistory();saveRuns();
+  pollRunBox(run);
+  return run;
+}
+// 재추출(A): 이 항목을 삭제하고, 이 항목이 나온 각 수집을 **원본 그대로 따로** 재추출한다.
+// (합쳐서 새 수집을 만들던 방식을 폐기 → 수집 분리·시각 보존)
+async function redoEntity(id){
+  const e=(state.entById||{})[id]||{};
+  const srcIds=[...new Set((e.source_refs||[]).map(r=>String(r).split("#")[0]).filter(s=>/^SRC-\d/.test(s)))];
+  if(!srcIds.length){alert("원문(source) 정보가 없어 재추출할 수 없습니다.");return;}
+  const warn=e.state==="active"&&e.type==="issue"?"\n(주의: 병합 통합본이면 통합이 풀릴 수 있습니다)":"";
+  if(!confirm("이 항목을 삭제하고, 이 항목이 나온 "+srcIds.length+"개 수집을 각각 원본 그대로 재추출합니다(수집 분리·시각 보존)."+warn+"\n진행할까요?"))return;
+  try{
+    await apiPost({step:"ENTITY_RETIRE",input:{id}});
+    state.editEntity=null;state.ents=null;
+    let n=0;
+    for(const sid of srcIds){const r=await reExtractExisting(sid);if(r)n++;}
+    state.editEntity=null;location.hash="#know";              // 이슈 리스트에 머무름
+    toast(n+"개 수집을 각각 재추출 전송 — 입력 탭에서 검토");
+  }catch(err){alert("재추출 실패: "+(err.code?err.code+" ":"")+err.message);}
+}
+
+// 숨기기/숨김해제 — 표시 전용(그래프·관계 유지). 무결성 영향 없음.
+async function hideEntity(id,hidden){
+  try{await apiPost({step:"ENTITY_HIDE",input:{id,hidden}});
+    await ensureIssueData(true);toast(hidden?"목록에서 숨겼습니다":"숨김을 해제했습니다");openEntity(id);}
+  catch(err){alert("실패: "+(err.code?err.code+" ":"")+err.message);}
+}
+// 삭제 — 엔티티+관계 소프트 회수(이력 보존). 영향(관계 수)을 미리 보여주고 확인.
+async function deleteEntity(id){
+  const e=(state.entById||{})[id]||{};
+  const relN=(state.rels||[]).filter(r=>r.from===id||r.to===id).length;
+  if(!confirm("'"+(e.title||id)+"' ("+id+")를 삭제합니다.\n"+
+    "· 연결된 관계 "+relN+"개도 함께 회수됩니다.\n"+
+    "· 소프트 삭제 — 이력은 보존되지만 목록·그래프에서 제외됩니다.\n진행할까요?"))return;
+  try{await apiPost({step:"ENTITY_DELETE",input:{id}});
+    await ensureIssueData(true);toast("삭제했습니다");location.hash="#know";}
+  catch(err){alert("삭제 실패: "+(err.code?err.code+" ":"")+err.message);}
+}
+
+// 각 run 독립 폴링 (동시 다수 가능 — 서버 프록시가 claude CLI를 큐잉)
+async function pollRunBox(run){
+  const myPoll=(run._poll=(run._poll||0)+1);   // 재시도 시 새 폴이 옛 폴을 대체
+  for(let i=0;i<1800;i++){                 // 최대 ~60분
+    await new Promise(r=>setTimeout(r,2000));
+    if(run._poll!==myPoll)return;          // 재시도로 새 폴 시작됨 → 이 폴 중단
+    if(!findRun(run.runId))return;         // 삭제된 run은 폴 중단
+    let s;try{s=await fetch("api/run_status?id="+encodeURIComponent(run.runId));}catch(e){continue;}
+    if(!s.ok)continue;
+    const job=await s.json().catch(()=>null);
+    if(!job)continue;
+    run._job=job;
+    if(job.state==="running"){run.status="running";updateRunTiming(run);continue;}
+    if(job.state==="done"){run.status="done";run.proposal=job.proposal;
+      const sv=run.reviews||{};run.reviews={};
+      (job.proposal.entities||[]).forEach(e=>{run.reviews[e.temp_id]=sv[e.temp_id]||defaultRv(e);});
+      updateRunBox(run);saveRuns();return;}
+    if(job.state==="error"){run.status="error";run.error=(job.code?job.code+" ":"")+(job.error||"추출 실패");
+      updateRunBox(run);saveRuns();return;}
+  }
+}
+
+/* ---- 히스토리 박스 렌더 ---- */
+function renderHistory(){$("#runHistory").innerHTML=(state.runs||[]).map(runBoxHtml).join("");}
+function updateRunBox(run){const b=document.getElementById("rb-"+run.runId);
+  if(b)b.outerHTML=runBoxHtml(run);else renderHistory();}
+function updateRunTiming(run){const b=document.getElementById("rb-"+run.runId);if(!b)return;
+  const started=(run._job&&run._job.started_at)?Date.parse(run._job.started_at):(run._t0||Date.now());
+  const sec=Math.max(0,Math.round((Date.now()-started)/1000));
+  b.querySelectorAll('[data-timer]').forEach(t=>{t.textContent=sec+"초";});}
+function runStagesHtml(run){
+  const j=run._job||{};let ex="";
+  if(run.status==="running"){
+    const started=j.started_at?Date.parse(j.started_at):(run._t0||Date.now());
+    const sec=Math.max(0,Math.round((Date.now()-started)/1000));
+    ex=`<span class="stg run">EXTRACT ⏳ <b data-timer>${sec}초</b></span>`;
+  }else if(run.status==="done"){
+    ex=`<span class="stg ok">EXTRACT ✓${j.extract_ms?" "+(j.extract_ms/1000).toFixed(1)+"초":""}</span>`;
+  }else if(run.status==="error"){
+    ex=`<span class="stg err">EXTRACT ✗${j.extract_ms?" "+(j.extract_ms/1000).toFixed(1)+"초":""}</span>`;
+  }
+  let cm="";
+  if(run.committed)cm=`<span class="sarw">›</span><span class="stg ok">COMMIT ✓</span>`;
+  else if(run.status==="done")cm=`<span class="sarw">›</span><span class="stg wait">COMMIT 대기</span>`;
+  return `<span class="stg ok">CAPTURE ✓</span><span class="sarw">›</span>${ex}${cm}`;
+}
+const CH_KO={mail:"메일",messenger:"메신저",meeting:"회의록",confluence:"Confluence",ticket:"티켓",other:"기타"};
+function profileHtml(p){
+  // LLM이 판정한 출처 프로파일 — 채널은 다중(메일 속 메신저·컨플 회의록 중첩 대응)
+  const sp=p&&p.source_profile;if(!sp)return"";
+  const chs=(sp.channels||[]).map(c=>CH_KO[c]||c).join("+");
+  const cat=sp.category?` · 분류 <b>${esc(sp.category)}</b>`:"";
+  const note=sp.note?` <span title="${escAttr(sp.note)}">ⓘ</span>`:"";
+  return chs||cat?`<div class="rb-profile">출처(LLM 판정) <b>${esc(chs||"?")}</b>${cat}${note}</div>`:"";
+}
+function runCandsHtml(run){
+  const p=run.proposal;if(!p)return"";
+  // 관련 기존 지식(RETRIEVE) — LLM이 이걸 보고 연결/병합 제안 (M5)
+  const ret=p.retrieved||[];
+  const retHtml=ret.length?`<div class="rb-retrieved"><b>관련 기존 지식 ${ret.length}</b> (연결/병합 근거): `+
+    ret.slice(0,6).map(c=>`<a class="rb-ret-chip" href="#e/${escAttr(c.id)}">${esc(c.id)} ${esc((c.title||'').slice(0,16))}</a>`).join("")+`</div>`:"";
+  const links=(p.links&&p.links.length)?`<div class="links-note">기준정보 링크: `+
+    p.links.map(l=>`<span class="${l.status==='ambiguous'?'amb':''}">${esc(l.alias)}→${esc(l.candidates.join('/'))}${l.status==='ambiguous'?' (모호)':''}</span>`).join(" · ")+`</div>`:"";
+  const who=(p.producer&&p.producer.name)||"?";
+  const fb=p.fallback?` · <span class="err">폴백:${esc(p.fallback.from)}→stub</span>`:"";
+  const meta=profileHtml(p)+`<div class="rb-meta">후보 엔티티 ${p.entities.length} · 관계 ${p.relations.length} · 추출기 <b>${esc(who)}</b>${fb} · <button class="rb-src-btn" data-runsrc="${escAttr(run.runId)}">📄 원문</button> — 검토 후 우측 확정</div><div id="runRaw-${escAttr(run.runId)}" class="run-raw"></div>`;
+  const cands=p.entities.map(e=>{
+    const rv=run.reviews[e.temp_id]||{review:"accept"};
+    const ty=(rv.patch&&rv.patch.type)||e.type;const tc=tyCls(ty);
+    const ttl=(rv.patch&&rv.patch.title)||e.title;const ed=rv.review==="edit";
+    const mrg=e.merge_into?`<button class="mrg ${rv.review==='merge'?'on':''}" data-rev="merge">병합</button>`:'';
+    return `<div class="cand ${rv.review==='reject'?'rej':''}" data-tid="${escAttr(e.temp_id)}">
+      <div class="cand-h"><span class="ty ${tc}">${esc(ty)}</span><span class="cf">${esc(e.confidence||'')}</span>
+        <span class="rev"><button class="acc ${rv.review==='accept'?'on':''}" data-rev="accept">accept</button>
+        <button class="edt ${ed?'on':''}" data-rev="edit">edit</button>${mrg}
+        <button class="rej ${rv.review==='reject'?'on':''}" data-rev="reject">reject</button></span></div>
+      <div class="cand-b"><div class="ttl">${esc(ttl)}</div>${e.summary?`<div>${esc(e.summary)}</div>`:''}
+        ${e.merge_into?`<div class="mrg-note">→ 기존 <b>${esc(e.merge_into)}</b>에 병합 제안 (‘병합’ 선택 시 빈 필드 통합)</div>`:''}
+        <div class="ref">${esc((e.source_refs||[]).join(' '))}</div>
+        ${ed?`<select class="ed" data-ed="type">`+ETYPES.map(t=>`<option ${ty===t?'selected':''}>${t}</option>`).join("")+`</select><input class="ed" data-ed="title" value="${escAttr(ttl)}" placeholder="제목">`:''}
+      </div></div>`;
+  }).join("");
+  // 자연어 작업 명령(삭제/숨김) — 원문에서 감지, 확정 시 적용(파괴적이므로 근거·토글 노출, 기본 수락)
+  const ops=p.operations||[];
+  const OPKO={delete:"삭제",hide:"숨기기"};
+  const opTitle=id=>{const oe=(state.entById||{})[id];return oe?(oe.title||""):"";};
+  const opsHtml=ops.length?`<div class="rb-ops"><div class="rb-ops-h">⚠ 원문에서 감지된 작업 명령 ${ops.length} <span class="rb-ops-sub">(확정 시 적용 · 기본 수락)</span></div>`+
+    ops.map(o=>{const key=o.op+"|"+o.target;const dec=(run.opReviews&&run.opReviews[key])||"accept";
+      return `<div class="rb-op ${dec==='reject'?'rej':''}" data-opk="${escAttr(key)}">
+        <div class="rb-op-h"><span class="op-badge op-${esc(o.op)}">${OPKO[o.op]||esc(o.op)}</span>
+          <a class="op-tgt" href="#e/${escAttr(o.target)}">${esc(o.target)} ${esc(opTitle(o.target).slice(0,20))}</a>
+          ${o.confidence?`<span class="op-cf">${esc(o.confidence)}</span>`:''}
+          <span class="op-rev"><button class="acc ${dec==='accept'?'on':''}" data-oprev="accept">수락</button>
+          <button class="rej ${dec==='reject'?'on':''}" data-oprev="reject">거절</button></span></div>
+        ${o.evidence?`<div class="op-ev">“${esc(o.evidence)}”</div>`:''}</div>`;}).join("")+`</div>`:"";
+  // 관계 — 기존 정식 ID를 가리키면(전송 간 연결) 강조
+  const isExisting=x=>/^[A-Z]+-\d{4,}$/.test(String(x))&&!/^SRC-/.test(String(x));
+  const rels=p.relations.length?`<div class="rel-list">관계 후보 ${p.relations.length}<br>`+
+    p.relations.map(r=>{const lk=isExisting(r.from)||isExisting(r.to);
+      return `<span${lk?' style="color:var(--accent);font-weight:600"':''}>${esc(r.from)} —${esc(r.type)}→ ${esc(r.to)}${lk?' ↔기존':''}</span>`;}).join("<br>")+`</div>`:"";
+  return retHtml+links+meta+cands+opsHtml+rels;
+}
+// 소스 라벨: 수동 채널이 아니라 EXTRACT LLM이 판정한 채널(source_profile.channels 다중). 추출 전엔 없음.
+function runSrcLabel(run){
+  const sp=run.proposal&&run.proposal.source_profile;
+  if(sp&&sp.channels&&sp.channels.length)
+    return '['+sp.channels.map(c=>CH_KO[c]||c).join('+')+'] ';
+  return '';
+}
+// run 박스 원문 보기 토글 (검토·복기 공용)
+async function showRunSource(runId){
+  const run=findRun(runId);if(!run)return;
+  const el=document.getElementById("runRaw-"+runId);if(!el)return;
+  if(el.dataset.open){el.innerHTML="";delete el.dataset.open;return;}
+  el.innerHTML='<div class="ent-empty">불러오는 중…</div>';el.dataset.open="1";
+  try{const j=await api("api/source_text?id="+encodeURIComponent(run.sourceId));
+    const cap=(j.meta&&j.meta.captured_at)?fmtTs(j.meta.captured_at):'';
+    el.innerHTML=`<div class="raw-src"><div class="raw-h"><b>${esc(run.sourceId)}</b>${cap?`<span class="raw-meta">📅 수집 ${esc(cap)}</span>`:''}</div><pre>${esc(j.text||'')}</pre></div>`;}
+  catch(e){el.innerHTML='<span class="ent-empty">원문 로드 실패</span>';}
+}
+// 복기: 커밋 당시 후보 + 결정 뱃지 (읽기전용)
+const RECAP_DEC={accept:"수락",edit:"수정",merge:"병합",reject:"거절"};
+function recapHtml(run){
+  const p=run.proposal;
+  if(!p||!p.entities)return '<div class="ent-empty">불러오는 중… (다시 펼쳐주세요)</div>';
+  const links=(p.links&&p.links.length)?`<div class="links-note">기준정보: `+p.links.map(l=>esc(l.alias)).join(", ")+`</div>`:"";
+  const cands=p.entities.map(e=>{
+    const rv=(run.reviews||{})[e.temp_id]||{review:"accept"};
+    const ty=(rv.patch&&rv.patch.type)||e.type,ttl=(rv.patch&&rv.patch.title)||e.title||'';
+    const dec=RECAP_DEC[rv.review]||rv.review;
+    const mi=(rv.review==="merge"&&rv.merge_into)?" → "+esc(rv.merge_into):"";
+    return `<div class="recap-cand ${rv.review==='reject'?'rej':''}"><span class="ty-badge ${tyCls(ty)}">${esc(ty)}</span>`+
+      `<span class="recap-t">${esc(ttl)}</span><span class="recap-dec dec-${rv.review}">${esc(dec)}${mi}</span></div>`;}).join("");
+  const rels=p.relations&&p.relations.length?`<div class="rel-list">관계 ${p.relations.length}</div>`:"";
+  const OPKO={delete:"삭제",hide:"숨기기"};
+  const ao=run._appliedOps||(p.operations||[]).filter(o=>((run.opReviews||{})[o.op+"|"+o.target]||"accept")!=="reject");
+  const ops=ao&&ao.length?`<div class="rel-list">적용된 작업 ${ao.length}: `+
+    ao.map(o=>`<span class="op-badge op-${esc(o.op)}">${OPKO[o.op]||esc(o.op)}</span> ${esc(o.target)}`).join(" · ")+`</div>`:"";
+  return links+cands+rels+ops;
+}
+async function toggleRecap(runId){
+  const run=findRun(runId);if(!run)return;
+  run._recapOpen=!run._recapOpen;
+  if(run._recapOpen&&(!run.proposal||!run.proposal.entities)){   // 새로고침 후 지연 로드
+    try{const j=await api("api/run?id="+encodeURIComponent(runId));
+      run.proposal=j.run;
+      if((!run.reviews||!Object.keys(run.reviews).length)&&j.committed&&j.committed.decisions)run.reviews=j.committed.decisions;
+      if(j.committed&&j.committed.operations)run._appliedOps=j.committed.operations;
+    }catch(e){}
+  }
+  updateRunBox(run);
+}
+function runBoxHtml(run){
+  const st=run.status;
+  const badge=st==="running"?'<span class="rb-status running">처리중</span>'
+    :st==="error"?'<span class="rb-status error">실패</span>'
+    :run.committed?'<span class="rb-status committed">확정됨</span>'
+    :'<span class="rb-status done">검토대기</span>';
+  let body,commit="";
+  if(st==="running"){body=`<div class="rb-run">추출 중… <span class="rb-timer" data-timer>0초</span> <span style="color:var(--muted)">(모델 판단 대기)</span></div>`;}
+  else if(st==="error"){body=`<div class="rb-err">${esc(run.error||'추출 실패')}</div>`+
+    `<div class="rb-actions"><button class="rb-retry" data-retry="${escAttr(run.runId)}">↻ 재시도</button></div>`;}
+  else if(run.committed){   // 확정 후: 원문 + 접힌 복기 스냅샷(읽기전용)
+    body=`<div class="rb-meta">확정 완료 — ${esc(run.commitMsg||'')} · <button class="rb-src-btn" data-runsrc="${escAttr(run.runId)}">📄 원문</button></div>`+
+      `<div id="runRaw-${escAttr(run.runId)}" class="run-raw"></div>`+
+      `<div class="rb-recap"><span class="rb-recap-tog" data-recap="${escAttr(run.runId)}">${run._recapOpen?'▾':'▸'} 커밋 당시 상태 (복기)</span>`+
+      (run._recapOpen?`<div class="rb-recap-body">${recapHtml(run)}</div>`:'')+`</div>`;
+    commit=`<div class="rb-commit"><div class="rb-done">✓ 확정</div></div>`;
+  }else{   // 검토대기: 인터랙티브 후보 + 확정 버튼
+    body=runCandsHtml(run);
+    commit=`<div class="rb-commit"><button class="rb-commit-btn" data-commit="${escAttr(run.runId)}">확정<br>COMMIT</button></div>`;}
+  return `<div class="run-box" id="rb-${escAttr(run.runId)}" data-run="${escAttr(run.runId)}">
+    <div class="rb-top"><span class="rb-id">${esc(run.runId)}</span><span class="rb-src">${runSrcLabel(run)}${esc(run.snippet)}</span>${badge}<button class="rb-del" data-del="${escAttr(run.runId)}" title="히스토리에서 삭제">×</button></div>
+    <div class="rb-stages">${runStagesHtml(run)}</div>
+    <div class="rb-main"><div class="rb-body">${body}</div>${commit}</div></div>`;
+}
+
+async function commitRun(run){
+  if(!run||run.committed)return;
+  const b=document.getElementById("rb-"+run.runId);const btn=b&&b.querySelector('.rb-commit-btn');
+  if(btn){btn.disabled=true;btn.innerHTML="확정 중…";}
+  try{
+    const ops=((run.proposal&&run.proposal.operations)||[])
+      .filter(o=>((run.opReviews||{})[o.op+"|"+o.target]||"accept")!=="reject");
+    // accept_all: 'COMMIT 확정' 클릭 = 남은 후보(미토글)를 기본 accept로 수락한다는 명시적 검토 확인(BG-5)
+    const com=await apiPost({step:"COMMIT",run_id:run.runId,input:{decisions:run.reviews,operations:ops,accept_all:true}});
+    const r=com.result;
+    run.committed=true;
+    const nOps=(r.operations||[]).length;
+    run.commitMsg=`엔티티 ${r.entities.length}·관계 ${r.relations.length}`+(nOps?` ·작업 ${nOps}`:"")+(r.warnings.length?` ·미해소 ${r.warnings.length}`:"");
+    updateRunBox(run);saveRuns();
+  }catch(e){if(btn){btn.disabled=false;btn.innerHTML="확정<br>COMMIT";}
+    alert("확정 실패: "+(e.code?e.code+" ":"")+e.message);}
+}
+
+// 실패(또는 임의) run을 히스토리에서 삭제
+function deleteRun(id){state.runs=(state.runs||[]).filter(r=>r.runId!==id);renderHistory();saveRuns();}
+// 실패한 run 재시도 — 이미 캡처된 원본으로 EXTRACT 재발사
+async function retryRun(run){
+  if(!run)return;
+  run.status="running";run.error=null;run._t0=Date.now();run._job=null;
+  updateRunBox(run);saveRuns();
+  try{
+    const ext=await apiPost({step:"EXTRACT",run_id:run.runId,input:{source_id:run.sourceId}});
+    run.runId=ext.run_id||run.runId;pollRunBox(run);
+  }catch(e){run.status="error";run.error=(e.code?e.code+" ":"")+e.message;updateRunBox(run);saveRuns();}
+}
+
+// 새로고침/재접속 시 히스토리 복원 (서버가 진실의 원천, 실행 중이던 run은 재폴링)
+async function restoreRuns(){
+  const saved=loadRunsLS();state.runs=[];if(!saved.length)return;
+  let byId={};try{(await api("api/runs")).runs.forEach(r=>{byId[r.run_id]=r;});}catch(e){}
+  for(const s of saved){
+    let job=null;try{const r=await fetch("api/run_status?id="+encodeURIComponent(s.runId));if(r.ok)job=await r.json();}catch(e){}
+    const srv=byId[s.runId];
+    const known=!!srv||(job&&job.state&&job.state!=="unknown");
+    if(!known)continue;   // 서버가 모르는 run(초기화 등) → 히스토리에서 자동 제거
+    const run={runId:s.runId,sourceId:s.sourceId,channel:s.channel,snippet:s.snippet,
+      reviews:s.reviews||{},committed:(srv&&srv.committed)||s.committed||false,
+      commitMsg:s.commitMsg,status:"done",proposal:null,startedAt:s.startedAt,_t0:Date.now(),_job:job};
+    if(run.committed)run.status="done";
+    else if(job&&job.state==="running")run.status="running";
+    else if(job&&job.state==="done"){run.status="done";run.proposal=job.proposal;
+      const sv=run.reviews;run.reviews={};(job.proposal.entities||[]).forEach(e=>{run.reviews[e.temp_id]=sv[e.temp_id]||defaultRv(e);});}
+    else if(job&&job.state==="error"){run.status="error";run.error=(job.code?job.code+" ":"")+(job.error||"추출 실패");}
+    else run.status="done";
+    state.runs.push(run);
+  }
+  renderHistory();
+  state.runs.forEach(run=>{if(run.status==="running")pollRunBox(run);});
+  saveRuns();
+}
+
+// 실행 중 박스의 타이머를 1초마다 갱신 (실시간 처리시간)
+setInterval(function(){(state.runs||[]).forEach(function(r){if(r.status==="running")updateRunTiming(r);});},1000);
+
+/* ---------- 이슈 (끝단계: 정리된 리스트 → 세부 페이지) ---------- */
+const TYPE_ORDER=["issue","case","finding","action","initiative","pattern","context"];
+function tyCls(t){return String(t||"").replace(/[^A-Za-z0-9_-]/g,"");}
+/* PM 정형 필드: 파생(진행기간·D-day)은 오늘 기준으로 계산 */
+function pmDerived(e){
+  const out={};const today=new Date();today.setHours(0,0,0,0);
+  const parse=s=>{const d=new Date(String(s)+"T00:00:00");return isNaN(d)?null:d;};
+  if(e.start_date){const s=parse(e.start_date);if(s){const n=Math.floor((today-s)/86400000);
+    out.period=n>=0?(n+"일차"):("시작 "+(-n)+"일 전");}}
+  if(e.deadline){const dl=parse(e.deadline);if(dl){const n=Math.floor((dl-today)/86400000);
+    out.dday=n>0?("D-"+n):(n===0?"D-day":("D+"+(-n)));out.late=n<0;}}
+  return out;
+}
+function hasPM(e){return !!(e.process||e.product||e.project||e.start_date||e.deadline||e.occurred_at||e.captured_at);}
+// ISO 타임스탬프 → "YYYY-MM-DD HH:MM:SS"
+function fmtTs(iso){if(!iso)return"";return String(iso).replace("T"," ").replace(/(\.\d+)?(\+\d\d:?\d\d|Z)$/,"").slice(0,19);}
+// 일자 확실성 마커 (근사/불확실 병행 표기)
+function confMark(c){return c==='approximate'?' <b class="approx">≈근사</b>':c==='uncertain'?' <b class="unc">불확실</b>':'';}
+function pmChips(e){
+  const d=pmDerived(e);const p=[];
+  if(e.process)p.push(esc(e.process));
+  if(e.product)p.push(esc(e.product));
+  if(e.project)p.push(esc(e.project));
+  if(e.start_date)p.push("시작 "+esc(String(e.start_date).slice(5)));
+  if(d.period)p.push(esc(d.period));
+  if(e.deadline)p.push('<b'+(d.late?' class="late"':'')+'>'+esc(d.dday||e.deadline)+'</b>');
+  return p;
+}
+/* ---------- 프롬프트/엔진 (두번째 화면: LLM 세트 = API+시스템프롬프트+컨텍스트) ---------- */
+async function loadEngines(){
+  const note=$("#engNote"),pipe=$("#engPipe"),list=$("#engList");
+  try{
+    const d=await api("api/engines");
+    const c=d.counts||{};
+    note.innerHTML=esc(d.note||"")+(c.total?` <b style="color:var(--fg)">(세트 ${c.total} · 활성 ${c.active} · 설계 ${c.planned})</b>`:"");
+    const byStage={};(d.engines||[]).forEach(e=>{(byStage[e.stage]=byStage[e.stage]||[]).push(e);});
+    // 파이프라인 흐름: 원문 → STAGE들(LLM 수·병렬 표시) → 검토 → 확정
+    pipe.innerHTML='<span class="st store">원문</span>'+
+      (d.stages||[]).map(st=>{const n=(byStage[st.id]||[]).length;
+        return '<span class="arw">→</span>'+
+          `<span class="st llm" title="${escAttr(st.title)}">${esc(st.id)}<span class="k">${n} LLM${st.parallel?' ∥':''}</span></span>`;}).join("")+
+      '<span class="arw">→</span><span class="st human">검토</span>'+
+      '<span class="arw">→</span><span class="st store">확정</span>';
+    // 세트 카드 — 단계별 그룹
+    list.innerHTML=(d.stages||[]).map(st=>{
+      const cards=(byStage[st.id]||[]).map(engCard).join("");
+      if(!cards)return'';
+      const mark=st.parallel?'<span class="par">∥ 병렬</span>':'<span class="ser">→ 직렬</span>';
+      return `<div class="eng-stage"><div class="eng-stage-h">STAGE ${esc(st.id)} · ${esc(st.title)} ${mark}</div>`+
+        `<div class="eng-stage-d">${esc(st.desc||'')}</div>${cards}</div>`;
+    }).join("");
+  }catch(e){note.textContent="";pipe.innerHTML="";list.innerHTML='<div class="empty">'+esc(e.message)+'</div>';}
+}
+function engCard(g){
+  const a=g.api||{};
+  const ctx=(g.context||[]).map(c=>{
+    let inner=`<div class="cn">${esc(c.name)}</div>`+(c.detail?`<div class="cd">${esc(c.detail)}</div>`:'');
+    if(c.items&&c.items.length)inner+=c.items.map(x=>`<span class="eng-alias">${esc(x)}</span>`).join("");
+    if(c.schema)inner+=`<details><summary>JSON Schema 전문</summary><pre>${esc(JSON.stringify(c.schema,null,2))}</pre></details>`;
+    return `<div class="eng-ctx">${inner}</div>`;
+  }).join("");
+  const stt=g.status==='active'?'<span class="eng-status active">활성</span>':'<span class="eng-status planned">설계</span>';
+  return `<div class="eng-card">
+    <div class="h">${stt}<span class="ty-badge issue">${esc(g.role)}</span>
+      <span class="role">${esc(g.title||'')}</span></div>
+    <div class="eng-b">
+      <div class="eng-kv"><span class="l">API</span><span class="v">mode=${esc(a.mode||'?')} · model=${esc(a.model||'?')}</span></div>
+      ${a.via?`<div class="eng-kv"><span class="l">경로</span><span class="v">${esc(a.via)}</span></div>`:''}
+      <div class="eng-sec-t">시스템 프롬프트</div>
+      <pre class="eng-prompt">${esc(g.system_prompt||'')}</pre>
+      ${g.system_runtime_suffix?`<div class="cd" style="font-size:10px;color:var(--muted);margin:3px 0 0">+ ${esc(g.system_runtime_suffix)}</div>`:''}
+      ${g.user_template?`<div class="eng-sec-t">사용자 턴 (프레이밍)</div><details><summary>user template</summary><pre>${esc(g.user_template)}</pre></details>`:''}
+      <div class="eng-sec-t">함께 제공되는 컨텍스트</div>
+      ${ctx||'<div class="cd" style="color:var(--muted);font-size:10px">추가 컨텍스트 없음 (원문만)</div>'}
+      <div class="eng-sec-t">출력</div>
+      <div class="cd" style="font-size:10.5px;color:var(--muted)">${esc(g.output||'')}</div>
+    </div></div>`;
+}
+async function ensureIssueData(force){
+  if(state.ents&&!force)return;
+  const [en,rl]=await Promise.all([api("api/entities"),api("api/relations")]);
+  state.ents=en.entities||[];state.rels=rl.relations||[];
+  state.entById={};state.ents.forEach(e=>{state.entById[e.id]=e;});
+}
+async function loadIssues(){
+  try{
+    const st=await api("api/stats");await ensureIssueData(true);
+    const s=st.stats;
+    $("#knowTiles").innerHTML=[["엔티티",s.entities],["관계",s.relations],["원본",s.sources],["RUN",s.runs]]
+      .map(([k,n])=>`<div class="tile"><div class="n">${n}</div><div class="k">${esc(k)}</div></div>`).join("");
+    const counts={};state.ents.forEach(e=>{counts[e.type]=(counts[e.type]||0)+1;});
+    const types=TYPE_ORDER.filter(t=>counts[t]).concat(Object.keys(counts).filter(t=>TYPE_ORDER.indexOf(t)<0));
+    if(!(state.issueFilter==="all"||counts[state.issueFilter]))state.issueFilter="all";
+    const nHidden=state.ents.filter(e=>e.hidden&&e.type!=="context").length;
+    $("#issueFilter").innerHTML=[`<span class="fchip ${state.issueFilter==='all'?'on':''}" data-ft="all">전체 <b>${state.ents.length}</b></span>`]
+      .concat(types.map(t=>`<span class="fchip ${state.issueFilter===t?'on':''}" data-ft="${escAttr(t)}">${esc(t)} <b>${counts[t]}</b></span>`))
+      .concat(nHidden?[`<span class="fchip hchip ${state.showHidden?'on':''}" data-hidden-toggle="1" title="숨김 항목 표시/감춤">🙈 숨김 <b>${nHidden}</b></span>`]:[])
+      .concat([`<span class="fchip tchip ${state.trashView?'on':''}" data-trash-toggle="1" title="삭제된 항목(휴지통) 보기·복원">🗑 휴지통</span>`]).join("");
+    renderIssueList();
+  }catch(e){$("#knowTiles").innerHTML='<div class="empty">'+esc(e.message)+'</div>';$("#issueFilter").innerHTML="";$("#issueList").innerHTML="";}
+}
+// 정렬키: 추정 발생시각(확실성≠uncertain) 우선, 없거나 추정불가면 전송시각. 오름차순.
+function sortTime(e){
+  if(e&&e.occurred_at&&e.date_confidence!=="uncertain")return String(e.occurred_at);
+  return e&&e.captured_at?String(e.captured_at):"";
+}
+function byTimeAsc(a,b){return (sortTime(a)||"~").localeCompare(sortTime(b)||"~");}
+const STATUS_ORDER=["정의","원인탐색","원인분석","원인발견","해결책탐색","재발방지","해결중","종결"];
+function statusBadge(s){if(!s)return"";
+  const cls=s==="종결"?"st-closed":s==="재발"?"st-reopen":s==="보류"?"st-hold":"st-prog";
+  return `<span class="st-badge ${cls}">${esc(s)}</span>`;}
+function sevBadge(s){return s?`<span class="sev-badge sev-${esc(s)}">${esc(s)}</span>`:"";}
+// 부모(issue) — 다부모 허용. non-issue는 연결된 모든 issue, issue는 계층관계 to쪽 issue.
+const HIER_REL=new Set(["recurrence_of","duplicate_of","part_of","instance_of","derived_from"]);
+function parentsOf(e){
+  const byId=state.entById||{},ps=new Set(),isIssue=x=>byId[x]&&byId[x].type==="issue";
+  (state.rels||[]).forEach(r=>{
+    if(e.type!=="issue"){
+      if(r.from===e.id&&isIssue(r.to))ps.add(r.to);
+      if(r.to===e.id&&isIssue(r.from))ps.add(r.from);
+    }else if(r.from===e.id&&HIER_REL.has(r.type)&&isIssue(r.to)&&r.to!==e.id){ps.add(r.to);}
+  });
+  return [...ps];
+}
+function issueRowHtml(e,depth,hasKids,dup){
+  const dash='<span class="dim">—</span>',cell=v=>v?esc(v):dash;
+  const md=s=>s?esc(String(s).slice(5,10)):dash,d=pmDerived(e),c=tyCls(e.type),isIss=e.type==="issue";
+  const dl=e.deadline?`${esc(String(e.deadline).slice(5))}${d.dday?` <span class="${d.late?'late':'dday'}">${esc(d.dday)}</span>`:''}`:dash;
+  const occ=e.occurred_at?`${esc(String(e.occurred_at).slice(5,10))}${e.date_confidence==='uncertain'?'<span class="late" title="불확실">?</span>':e.date_confidence==='approximate'?'<span class="dim" title="근사">≈</span>':''}`:dash;
+  const tog=hasKids?`<span class="tw-tog" data-tog="${escAttr(e.id)}">${state.treeExpanded&&state.treeExpanded[e.id]?'▾':'▸'}</span>`:'<span class="tw-tog-sp"></span>';
+  return `<tr data-ent="${escAttr(e.id)}"${e.hidden?' class="row-hidden"':''}>`+
+    `<td><span class="ty-badge ${c}">${esc(e.type)}</span>${e.hidden?' <span class="row-hide-mk" title="숨김">🙈</span>':''}</td>`+
+    `<td class="iss-t"><span class="tw-indent" style="width:${depth*14}px"></span>${tog}<span class="iss-tl"><span class="t">${esc(e.title||'(제목 없음)')}${dup?' <span class="dup-mark" title="다른 부모에도 표시됨">↗</span>':''}</span><span class="s">${esc(e.id)}</span></span></td>`+
+    `<td>${isIss?(statusBadge(e.status)||dash):''}</td>`+
+    `<td>${isIss?(sevBadge(e.severity)||dash):''}</td>`+
+    `<td>${cell(e.process)}</td><td>${cell(e.product)}</td><td>${cell(e.project)}</td>`+
+    `<td>${occ}</td><td>${md(e.start_date)}</td>`+
+    `<td>${isIss?(e.closed_at?esc(String(e.closed_at).slice(5)):dash):''}</td>`+
+    `<td>${d.period?esc(d.period):dash}</td><td>${dl}</td></tr>`;
+}
+function tableWrap(rows){
+  return `<div class="table-wrap"><table class="issues"><thead><tr>`+
+    `<th>유형</th><th>이슈/항목</th><th>상태</th><th>중요</th><th>공정</th><th>제품</th><th>과제</th><th>발생</th><th>시작</th><th>만료</th><th>진행</th><th>마감</th>`+
+    `</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+async function renderTrash(){   // 휴지통 뷰(BG-9): 삭제된 항목 목록 + 복원
+  document.querySelectorAll('#issueFilter .fchip').forEach(x=>x.classList.remove('on'));
+  const tc=document.querySelector('#issueFilter .tchip');if(tc)tc.classList.add('on');
+  $("#issueList").innerHTML='<div class="empty">불러오는 중…</div>';
+  try{
+    const j=await api("api/entities?state=trashed");
+    const ts=(j.entities||[]).filter(e=>e.type!=="context");
+    if(!ts.length){$("#issueList").innerHTML='<div class="empty">휴지통이 비어 있습니다.</div>';return;}
+    const rows=ts.map(e=>`<tr class="trash-row">`+
+      `<td><span class="ty-badge ${tyCls(e.type)}">${esc(e.type)}</span></td>`+
+      `<td class="iss-t"><span class="iss-tl"><span class="t">${esc(e.title||'(제목 없음)')}</span><span class="s">${esc(e.id)}</span></span></td>`+
+      `<td>${e.trashed_at?esc(String(e.trashed_at).slice(0,10)):'—'}</td>`+
+      `<td><button class="ent-restore-btn" data-restore="${escAttr(e.id)}">↩ 복원</button></td></tr>`).join("");
+    $("#issueList").innerHTML=`<div class="table-wrap"><table class="issues"><thead><tr>`+
+      `<th>유형</th><th>이슈/항목</th><th>삭제일</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }catch(e){$("#issueList").innerHTML='<div class="empty">'+esc(e.message)+'</div>';}
+}
+async function restoreEntity(id){
+  try{
+    const r=await apiPost({step:"ENTITY_RESTORE",input:{id}});
+    const sk=((r.result&&r.result.skipped)||[]).length;
+    toast("복원했습니다"+(sk?` (관계 ${sk}개는 상대가 삭제 상태라 보류)`:""));
+    state.ents=null;await loadIssues();   // 칩·타일·목록 모두 재계산(휴지통 뷰면 renderIssueList가 renderTrash 호출)
+  }catch(e){alert("복원 실패: "+(e.code?e.code+" ":"")+e.message);}
+}
+function renderIssueList(){
+  if(state.trashView){renderTrash();return;}
+  const f=state.issueFilter||"all";
+  document.querySelectorAll('#issueFilter .fchip').forEach(x=>x.classList.toggle('on',x.dataset.ft===f));
+  const showHidden=!!state.showHidden;   // 숨김 항목은 기본 제외(그래프엔 존재, 목록만 숨김)
+  const ents=(state.ents||[]).filter(e=>e.type!=="context"&&(showHidden||!e.hidden));
+  if(!ents.length){$("#issueList").innerHTML='<div class="empty">'+(showHidden?'표시할 이슈가 없습니다.':'표시할 이슈가 없습니다. (숨김 항목이 있을 수 있습니다)')+'</div>';return;}
+  if(f!=="all"){   // 특정 타입 필터 = 평면 목록(시간순)
+    const flat=ents.filter(e=>e.type===f).sort(byTimeAsc);
+    $("#issueList").innerHTML=tableWrap(flat.map(e=>issueRowHtml(e,0,false,false)).join(""));return;
+  }
+  // 전체 = 이슈 트리 (다부모 중복표현, 기본 접힘)
+  const byId=state.entById||{},childrenMap={},roots=[],orphans=[];
+  const multi=new Set(ents.filter(e=>parentsOf(e).length>1).map(e=>e.id));
+  ents.forEach(e=>{const ps=parentsOf(e);
+    if(ps.length)ps.forEach(p=>{(childrenMap[p]=childrenMap[p]||[]).push(e.id);});
+    else if(e.type==="issue")roots.push(e.id);else orphans.push(e.id);});
+  Object.keys(childrenMap).forEach(k=>{childrenMap[k]=[...new Set(childrenMap[k])].sort((x,y)=>byTimeAsc(byId[x],byId[y]));});
+  roots.sort((x,y)=>byTimeAsc(byId[x],byId[y]));
+  const exp=state.treeExpanded||(state.treeExpanded={}),rows=[];
+  function walk(id,depth,anc){const e=byId[id];if(!e)return;
+    const kids=(childrenMap[id]||[]).filter(cid=>!anc.has(cid));
+    rows.push(issueRowHtml(e,depth,kids.length>0,multi.has(id)&&depth>0));
+    if(exp[id]&&depth<6){const na=new Set(anc);na.add(id);kids.forEach(cid=>walk(cid,depth+1,na));}}
+  roots.forEach(r=>walk(r,0,new Set()));
+  if(orphans.length){orphans.sort((x,y)=>byTimeAsc(byId[x],byId[y]));
+    rows.push(`<tr class="grp-row"><td colspan="12">(이슈 미연결) ${orphans.length}</td></tr>`);
+    orphans.forEach(oid=>rows.push(issueRowHtml(byId[oid],0,false,false)));}
+  $("#issueList").innerHTML=tableWrap(rows.join(""));
+}
+async function openEntity(id){
+  const box=$("#entDetail");
+  box.innerHTML='<span class="ent-back" data-back="1">‹ 이슈 목록</span><div class="ent-empty">불러오는 중…</div>';
+  $("#scrKnow").hidden=true;$("#scrEnt").hidden=false;window.scrollTo(0,0);
+  try{await ensureIssueData(false);}catch(e){}
+  const e=state.entById&&state.entById[id];
+  if(!e){box.innerHTML='<span class="ent-back" data-back="1">‹ 이슈 목록</span><div class="empty">엔티티를 찾을 수 없습니다: '+esc(id)+'</div>';return;}
+  state.curEnt=id;
+  if(state.editEntity&&state.editEntity!==id)state.editEntity=null;
+  if(state.editEntity===id){box.innerHTML=entEditHtml(e);return;}
+  const byId=state.entById||{},rels=state.rels||[],isIss=e.type==="issue";
+  const ctx=[];
+  rels.filter(r=>r.from===id||r.to===id).forEach(r=>{const o=r.from===id?r.to:r.from;const oe=byId[o];
+    if(oe&&oe.type==="context"&&!ctx.some(c=>c.id===o))ctx.push(oe);});
+  // 관계 — type별 그룹, 각 그룹 안에서 상대 엔티티 시간순(오름차순)
+  const groups={};
+  rels.filter(r=>r.from===id||r.to===id).forEach(r=>{const o=r.from===id?r.to:r.from;const oe=byId[o];
+    if(oe&&oe.type==="context")return;
+    (groups[r.type]=groups[r.type]||[]).push({o,dir:r.from===id?"out":"in"});});
+  Object.values(groups).forEach(arr=>arr.sort((a,b)=>byTimeAsc(byId[a.o],byId[b.o])));
+  const relCount=Object.values(groups).reduce((a,g)=>a+g.length,0);
+  const dash='<span class="dim">—</span>';
+  const relHtml=Object.keys(groups).sort().map(t=>{
+    const cells=groups[t].map(({o,dir})=>{const oe=byId[o],label=oe?(oe.title||o):o;
+      const occD=oe&&oe.occurred_at?esc(String(oe.occurred_at).slice(0,10)):"";
+      const mk=oe?(oe.date_confidence==="approximate"?'<span class="mk-approx">≈</span>':oe.date_confidence==="uncertain"?'<span class="mk-unc">?</span>':''):'';
+      const cap=oe&&oe.captured_at?esc(fmtTs(oe.captured_at).slice(0,10)):"";
+      return `<div class="r-dt"><span class="rdir">${dir==="out"?"→":"←"}</span>`+(oe?`<span class="ty-badge ${tyCls(oe.type)}">${esc(oe.type)}</span>`:'<span class="dim">?</span>')+`</div>`+
+        `<a class="r-title" href="#e/${escAttr(o)}">${esc(label)}</a>`+
+        `<div class="r-occ">${occD||dash}<span class="r-mk">${mk}</span></div>`+
+        `<div class="r-cap">${cap||dash}</div>`;}).join("");
+    return `<div class="rel-grp"><div class="rel-grp-h">${esc(t)} <span class="rel-grp-n">${groups[t].length}</span></div>`+
+      `<div class="rel-grid"><div class="r-hd">유형</div><div class="r-hd">이름</div><div class="r-hd">발생</div><div class="r-hd">전송</div>${cells}</div></div>`;}).join("");
+  const pmd=pmDerived(e),S=x=>esc(x==null?"":x),pmRows=[];
+  if(isIss)pmRows.push(["상태",statusBadge(e.status)||"—"],["중요도",sevBadge(e.severity)||"—"]);
+  pmRows.push(["공정명",S(e.process)],["제품",S(e.product)],["과제명",S(e.project)],
+    ["발생일",e.occurred_at?(S(e.occurred_at)+confMark(e.date_confidence)):""],
+    ["시작일자",S(e.start_date)],["진행기간",S(pmd.period)],
+    ["데드라인",e.deadline?(S(e.deadline)+(pmd.dday?` <b${pmd.late?' class="late"':''}>${S(pmd.dday)}</b>`:"")):""]);
+  if(isIss)pmRows.push(["만료일(종결)",S(e.closed_at)]);
+  const fc=e.first_captured_at,lc=e.captured_at;   // 최초·최종 전송(재추출 시 둘 다)
+  if(fc&&lc&&fc!==lc)pmRows.push(["최초 전송",S(fmtTs(fc))],["최종 전송(재추출)",S(fmtTs(lc))]);
+  else pmRows.push(["전송시점",lc?S(fmtTs(lc)):""]);
+  if(e.date_note)pmRows.push(["시점 근거",S(e.date_note)]);
+  const srcIds=[...new Set((e.source_refs||[]).map(r=>String(r).split("#")[0]).filter(s=>/^SRC-\d/.test(s)))];
+  box.innerHTML=`<span class="ent-back" data-back="1">‹ 이슈 목록</span>
+    <div class="ent-head"><span class="ty-badge ${tyCls(e.type)}">${esc(e.type)}</span><span class="eid">${esc(e.id)}</span>`+
+      (e.state?`<span class="tag">${esc(e.state)}</span>`:'')+`<span class="tag">rev.${esc(e.revision||1)}</span>`+
+      (e.hidden?`<span class="tag tag-hidden">🙈 숨김</span>`:'')+
+      `<button class="ent-edit-btn" data-edit="${escAttr(id)}">✎ 편집</button>`+
+      (e.state==="trashed"
+        ? `<button class="ent-restore-btn" data-restore="${escAttr(id)}">↩ 복원</button>`
+        : e.type==="context" ? ''   // context는 좌표 앵커 — 재추출·삭제 없음(materialize가 관리, 삭제 시 복원경로 없음)
+          : `<button class="ent-redo-btn" data-redo="${escAttr(id)}" title="이 항목 삭제 후 원문 재추출">↻ 재추출</button>`+
+            `<button class="ent-hide-btn" data-enthide="${escAttr(id)}" data-hidden="${e.hidden?1:0}" title="${e.hidden?'목록에 다시 표시':'그래프는 유지하고 목록에서만 숨김'}">${e.hidden?'👁 숨김해제':'🙈 숨기기'}</button>`+
+            `<button class="ent-del-btn" data-entdel="${escAttr(id)}" title="관계 포함 소프트 삭제(이력 보존)">🗑 삭제</button>`)+`</div>
+    <div class="ent-title">${esc(e.title||'(제목 없음)')}</div>`+
+    (e.summary?`<div class="ent-sum">${esc(e.summary)}</div>`:'')+
+    ((["issue","case","action","initiative"].indexOf(e.type)>=0||hasPM(e))
+      ?`<div class="ent-sec"><h4>PM · 시간 정보</h4><div class="pm-grid">`+
+        pmRows.map(([l,v])=>`<span class="pl">${l}</span><span class="pv${v&&v!=='—'?'':' dim'}">${v||'—'}</span>`).join("")+`</div></div>`:'')+
+    (ctx.length?`<div class="ent-sec"><h4>버전 좌표 · context</h4><div class="ent-chips">`+
+      ctx.map(x=>`<a class="ent-ctx" href="#e/${escAttr(x.id)}">◈ ${esc(x.title||x.id)}</a>`).join("")+`</div></div>`:'')+
+    `<div class="ent-sec"><h4>관계 ${relCount} <span class="rel-sub">(type별·시간순)</span></h4>`+
+      (relCount?relHtml:'<div class="ent-empty">연결된 관계 없음</div>')+`</div>`+
+    (e.tags&&e.tags.length?`<div class="ent-sec"><h4>태그</h4><div class="ent-refs">#${e.tags.map(esc).join(" #")}</div></div>`:'')+
+    (e.source_refs&&e.source_refs.length?`<div class="ent-sec"><h4>출처</h4><div class="ent-refs">${e.source_refs.map(esc).join("  ")}</div></div>`:'')+
+    `<div class="ent-sec"><h4>메타</h4><div class="ent-kv">추출기 ${esc((e.produced_by&&e.produced_by.name)||'?')} · 갱신 ${esc(e.updated_at||'')}</div></div>`+
+    `<div class="ent-sec"><h4>검토 이력</h4><div id="entHist" class="hist-list"><span class="ent-empty">불러오는 중…</span></div></div>`+
+    (srcIds.length?`<div class="ent-sec"><button class="ent-raw-btn" data-rawsrc="${escAttr(srcIds.join(','))}">📄 원문 보기 (${srcIds.length})</button><div id="entRaw"></div></div>`:'');
+  loadHistory(id);
+}
+const HIST_LBL={"review.accept":"커밋 · 수락","review.edit":"커밋 · 수정","review.merge":"커밋 · 병합",
+  "review.reject":"거절","entity.create":"생성","entity.update":"편집","entity.reclassify":"재분류",
+  "entity.merge":"병합 흡수됨","entity.retire":"회수(재추출)"};
+async function loadHistory(id){
+  const el=$("#entHist");if(!el)return;
+  try{const h=(await api("api/history?entity="+encodeURIComponent(id))).history||[];el.innerHTML=histHtml(h);}
+  catch(e){el.innerHTML='<span class="ent-empty">이력 로드 실패</span>';}
+}
+function histHtml(h){
+  if(!h.length)return '<span class="ent-empty">이력 없음</span>';
+  return h.map(x=>{
+    const lbl=HIST_LBL[x.kind]||esc(x.kind),det=[];
+    if(x.changed&&x.changed.length)det.push("필드 "+x.changed.join(", "));
+    if(x.reclassified_from)det.push("원본 "+x.reclassified_from);
+    if(x.merged_into)det.push("→ "+x.merged_into);
+    if(x.revision)det.push("rev."+x.revision);
+    const cls=x.kind==="entity.retire"?"h-retire":x.kind==="entity.merge"?"h-merge":String(x.kind).indexOf("review")===0?"h-commit":"";
+    return `<div class="hist-row"><span class="hist-ts">${esc(fmtTs(x.ts))}</span>`+
+      `<span class="hist-lbl ${cls}">${esc(lbl)}</span>`+
+      `<span class="hist-det">${esc(det.join(" · "))}</span>`+
+      `<span class="hist-actor">${esc(x.actor||'')}</span></div>`;
+  }).join("");
+}
+const PROTECTED_NOTE="🔒 편집불가: id · type계열 규칙 · state · revision · source_refs · captured_at · produced_by (감사·출처 보존)";
+function entEditHtml(e){
+  const isIss=e.type==="issue";
+  const F=(l,k,v,ph)=>`<label class="edf"><span>${l}</span><input data-ef="${k}" value="${escAttr(v==null?'':v)}" placeholder="${ph||''}"></label>`;
+  const TA=(l,k,v)=>`<label class="edf"><span>${l}</span><textarea data-ef="${k}">${esc(v==null?'':v)}</textarea></label>`;
+  const SEL=(l,k,v,opts)=>`<label class="edf"><span>${l}</span><select data-ef="${k}"><option value="">—</option>`+opts.map(o=>`<option ${o===v?'selected':''}>${esc(o)}</option>`).join("")+`</select></label>`;
+  let f=TA("제목 (title)","title",e.title)+TA("요약 (summary)","summary",e.summary);
+  if(isIss)f+=SEL("상태 (status)","status",e.status,STATUS_ORDER.concat(["보류","재발"]))+SEL("중요도 (severity)","severity",e.severity,["S1","S2","S3","S4"])+F("만료일 (closed_at)","closed_at",e.closed_at,"YYYY-MM-DD");
+  f+=F("공정 (process)","process",e.process)+F("제품 (product)","product",e.product)+F("과제 (project)","project",e.project);
+  f+=F("발생일 (occurred_at)","occurred_at",e.occurred_at,"YYYY-MM-DD")+SEL("확실성 (date_confidence)","date_confidence",e.date_confidence,["exact","approximate","uncertain"]);
+  f+=F("시작일 (start_date)","start_date",e.start_date,"YYYY-MM-DD")+F("데드라인 (deadline)","deadline",e.deadline,"YYYY-MM-DD");
+  f+=F("태그 (tags, 쉼표구분)","tags",(e.tags||[]).join(", "));
+  f+=`<label class="edf"><span>유형 재분류 (type) ⚠ 새 ID 발급·관계 이관</span><select data-ef="type">`+ETYPES.map(t=>`<option ${t===e.type?'selected':''}>${t}</option>`).join("")+`</select></label>`;
+  return `<span class="ent-back" data-back="1">‹ 이슈 목록</span>
+    <div class="ent-head"><span class="ty-badge ${tyCls(e.type)}">${esc(e.type)}</span><span class="eid">${esc(e.id)}</span> <b style="color:var(--accent)">편집 모드</b></div>
+    <div class="ent-edit">${f}<div class="edf-protected">${PROTECTED_NOTE}</div>
+    <div class="edf-actions"><button class="btn primary" data-editsave="${escAttr(e.id)}">저장</button> <button class="btn" data-editcancel="${escAttr(e.id)}">취소</button></div></div>`;
+}
+async function editEntitySave(id){
+  const e0=(state.entById||{})[id]||{},patch={};let newType=null;
+  document.querySelectorAll('#entDetail [data-ef]').forEach(el=>{
+    const k=el.dataset.ef;let v=el.value;
+    if(k==="type"){newType=v;return;}   // type은 재분류(RECLASSIFY)로 별도 처리
+    if(k==="tags")v=v.split(",").map(s=>s.trim()).filter(Boolean);
+    patch[k]=v;});
+  try{
+    let target=id;
+    if(newType&&newType!==e0.type){
+      if(!confirm("유형을 '"+e0.type+"' → '"+newType+"'로 재분류합니다.\n새 ID가 발급되고(접두사 교정) 관계가 이관됩니다. 진행할까요?"))return;
+      const rc=await apiPost({step:"RECLASSIFY",input:{id,type:newType}});
+      target=(rc.result&&rc.result.new_id)||id;
+    }
+    let rej=[];
+    if(Object.keys(patch).length){const r=await apiPost({step:"ENTITY_EDIT",input:{id:target,patch}});rej=(r.result&&r.result.rejected)||[];}
+    state.editEntity=null;state.ents=null;await ensureIssueData(true);
+    if(target!==id)location.hash="#e/"+target;else openEntity(id);
+    if(rej.length)setTimeout(()=>alert("보호 필드는 반영 안 됨: "+rej.join(", ")),50);
+  }catch(err){alert("편집/재분류 실패: "+(err.code?err.code+" ":"")+err.message);}
+}
+async function showRawSource(ids){
+  const box=$("#entRaw");if(!box)return;box.innerHTML='<div class="ent-empty">불러오는 중…</div>';
+  const list=ids.split(",").filter(Boolean);
+  const srcs=[];
+  for(const sid of list){
+    try{const j=await api("api/source_text?id="+encodeURIComponent(sid));srcs.push({sid,text:j.text||'',m:j.meta||{}});}
+    catch(e){srcs.push({sid,err:true,m:{}});}
+  }
+  srcs.sort((a,b)=>String(a.m.captured_at||'~').localeCompare(String(b.m.captured_at||'~')));  // 수집 시각 오름차순(타임라인)
+  const parts=srcs.map((s,i)=>{
+    if(s.err)return `<div class="raw-src"><div class="raw-h"><b>${esc(s.sid)}</b></div><div class="ent-empty" style="padding:8px">불러오기 실패</div></div>`;
+    const m=s.m,cap=m.captured_at?fmtTs(m.captured_at):'';
+    const fca=(m.first_captured_at&&m.first_captured_at!==m.captured_at)?fmtTs(m.first_captured_at):'';
+    const ch=((m.source_profile&&m.source_profile.channels)||[]).map(c=>CH_KO[c]||c).join('+');
+    const meta=[ch?'['+ch+']':'',m.chars?m.chars+'자':''].filter(Boolean).join(' · ');
+    return `<div class="raw-src"><div class="raw-h">`+
+      (srcs.length>1?`<span class="raw-idx">수집 ${i+1}/${srcs.length}</span> `:'')+
+      `<b>${esc(s.sid)}</b>`+
+      (cap?`<span class="raw-meta">📅 수집 ${esc(cap)}</span>`:'')+
+      (meta?`<span class="raw-meta">${esc(meta)}</span>`:'')+
+      (fca?`<span class="raw-meta">· 최초수집 ${esc(fca)}</span>`:'')+
+      `</div><pre>${esc(s.text)}</pre></div>`;
+  });
+  box.innerHTML=(srcs.length>1?`<div class="raw-count">이 항목은 <b>${srcs.length}개 수집</b>에서 나왔습니다 — 수집 시각 순으로 구분됩니다.</div>`:'')+parts.join("");
+}
+
+/* ---------- 재조정 (순서 독립 재연결, M5 §6) ---------- */
+async function doReconcile(){
+  const msg=$("#reconcileMsg"),panel=$("#reconcilePanel");
+  msg.textContent="재조정 분석 중…";panel.innerHTML="";
+  try{
+    const r=await apiPost({step:"RECONCILE"});
+    const props=(r.result&&r.result.proposals)||[];
+    state._recProps=props;
+    if(!props.length){msg.textContent="추가 제안 없음 (이미 연결됨)";return;}
+    msg.textContent=props.length+"건 제안 — 체크 후 적용";
+    panel.innerHTML=props.map((p,i)=>
+      `<label class="rec-item"><input type="checkbox" data-rec="${i}" checked>`+
+      `<span><span class="rec-rel">${esc(p.a.id)} —${esc(p.type)}→ ${esc(p.b.id)}</span>`+
+      ` <span style="color:var(--muted)">${esc((p.a.title||'').slice(0,16))} · ${esc((p.b.title||'').slice(0,16))}</span>`+
+      `<div class="rec-reason">${esc(p.reason)}</div></span></label>`).join("")+
+      `<button class="btn primary rec-apply" id="btnRecApply">선택 적용</button>`;
+  }catch(e){msg.innerHTML='<span class="err">'+esc((e.code?e.code+" ":"")+e.message)+'</span>';}
+}
+async function applyReconcile(){
+  const props=state._recProps||[];
+  const picked=[...document.querySelectorAll('#reconcilePanel [data-rec]:checked')]
+    .map(c=>props[+c.dataset.rec]).filter(Boolean).map(p=>({from:p.from,to:p.to,type:p.type}));
+  if(!picked.length){$("#reconcileMsg").textContent="선택된 항목 없음";return;}
+  $("#reconcileMsg").textContent="적용 중…";
+  try{
+    const r=await apiPost({step:"RECONCILE_APPLY",input:{apply:picked}});
+    $("#reconcileMsg").textContent="관계 "+((r.result&&r.result.n)||0)+"건 생성됨";
+    $("#reconcilePanel").innerHTML="";state.ents=null;loadIssues();
+  }catch(e){$("#reconcileMsg").innerHTML='<span class="err">'+esc(e.message)+'</span>';}
+}
+
+/* ---------- 중복 병합 (같은 실물을 하나로, 개수 감소, M5) ---------- */
+async function doDedup(){
+  const msg=$("#reconcileMsg"),panel=$("#dedupPanel");
+  $("#reconcilePanel").innerHTML="";
+  msg.textContent="중복 검출 중…";panel.innerHTML="";
+  try{
+    const r=await apiPost({step:"DEDUP"});
+    const cl=(r.result&&r.result.clusters)||[];
+    state._dedupClusters=cl;
+    if(!cl.length){msg.textContent="중복 없음";return;}
+    const n=cl.reduce((a,c)=>a+c.members.length-1,0);
+    msg.textContent=cl.length+"개 군집 · 병합 시 "+n+"개 감소 — 대표 확인 후 적용";
+    panel.innerHTML=cl.map((c,ci)=>{
+      const opts=c.members.map(m=>`<option value="${escAttr(m.id)}" ${m.id===c.survivor?'selected':''}>${esc(m.id)} (deg ${m.deg||0})</option>`).join("");
+      const mem=c.members.map(m=>`<label class="ded-mem"><input type="checkbox" data-dclu="${ci}" data-did="${escAttr(m.id)}" ${m.id!==c.survivor?'checked':''}> <span class="rec-rel">${esc(m.id)}</span> ${esc((m.title||'').slice(0,26))}</label>`).join("");
+      return `<div class="rec-item" data-clu="${ci}"><span style="flex:1;min-width:0">
+        <div><span class="ty-badge ${tyCls(c.type)}">${esc(c.type)}</span> 중복 <b>${c.members.length}</b>건 <span class="rec-reason">${esc(c.reason)}</span></div>
+        <div style="margin-top:3px">대표(남길 것): <select data-surv="${ci}">${opts}</select></div>
+        <div style="margin-top:2px">흡수 대상: ${mem}</div></span></div>`;
+    }).join("")+`<button class="btn primary rec-apply" id="btnDedupApply">선택 병합 적용</button>`;
+  }catch(e){msg.innerHTML='<span class="err">'+esc((e.code?e.code+" ":"")+e.message)+'</span>';}
+}
+async function applyDedup(){
+  const cl=state._dedupClusters||[];const merges=[];
+  document.querySelectorAll('#dedupPanel [data-surv]').forEach(sel=>{
+    const ci=+sel.dataset.surv,surv=sel.value;
+    const absorbed=[...document.querySelectorAll('#dedupPanel [data-dclu="'+ci+'"]:checked')]
+      .map(c=>c.dataset.did).filter(id=>id!==surv);
+    if(absorbed.length)merges.push({survivor:surv,absorbed});
+  });
+  if(!merges.length){$("#reconcileMsg").textContent="선택된 병합 없음";return;}
+  $("#reconcileMsg").textContent="병합 중…";
+  try{
+    const r=await apiPost({step:"DEDUP_APPLY",input:{merges}});
+    $("#reconcileMsg").textContent="병합 완료 — "+((r.result&&r.result.n)||0)+"개 흡수(개수 감소)";
+    $("#dedupPanel").innerHTML="";state.ents=null;loadIssues();
+  }catch(e){$("#reconcileMsg").innerHTML='<span class="err">'+esc(e.message)+'</span>';}
+}
+
+/* ---------- routing & events ---------- */
+const TABS=["run","eng","docs","know"];   // 순서: 입력(첫 화면) · 프롬프트 · 문서 · 이슈(끝 화면)
+function setTab(tab){
+  if(!TABS.includes(tab))tab="run";
+  state.tab=tab;
+  document.querySelectorAll("#tabbar a").forEach(a=>a.classList.toggle("on",a.dataset.tab===tab));
+  $("#docToolbar").hidden=tab!=="docs";
+  $("#scrRun").hidden=tab!=="run";
+  $("#scrEng").hidden=tab!=="eng";
+  $("#scrKnow").hidden=tab!=="know";
+  $("#scrEnt").hidden=true;   // 상세는 openEntity에서만 표시
+  if(tab!=="docs"){$("#scrList").hidden=true;$("#scrDoc").hidden=true;$("#scrSearch").hidden=true;$("#btnBack").hidden=true;}
+  if(tab==="run")renderHistory();
+  if(tab==="eng")loadEngines();
+  if(tab==="know")loadIssues();
+}
+function route(){
+  const h=location.hash;
+  const m=h.match(/^#d\/([A-Za-z0-9_-]+)$/);
+  if(m){setTab("docs");openDoc(m[1],state.pendingHl);state.pendingHl=null;return;}
+  const me=h.match(/^#e\/([A-Za-z0-9_-]+)$/);
+  if(me){setTab("know");openEntity(me[1]);return;}   // setTab이 목록을, openEntity가 상세를 표시
+  if(h==="#eng"){setTab("eng");return;}
+  if(h==="#docs"){setTab("docs");show("list");return;}
+  if(h==="#know"){setTab("know");return;}
+  setTab("run");   // 기본 = 입력 (첫 화면엔 항상 텍스트박스+전송)
+}
+$("#homeLink").addEventListener("click",e=>{e.preventDefault();
+  if(location.hash==="#run"||location.hash===""){setTab("run");}else location.hash="#run";});
+$("#btnBack").addEventListener("click",()=>{
+  $("#q").value="";
+  if(!$("#scrSearch").hidden){if(state.cur)openDoc(state.cur);else show("list");return;}
+  if(location.hash)location.hash="";else show("list");
+});
+$("#q").addEventListener("input",e=>{
+  clearTimeout(qTimer);qTimer=setTimeout(()=>runSearch(e.target.value.trim()),200);
+});
+$("#btnExtract").addEventListener("click",doSubmit);
+$("#btnReconcile").addEventListener("click",doReconcile);
+$("#btnDedup").addEventListener("click",doDedup);
+$("#btnRebuild").addEventListener("click",doRebuild);
+async function doRebuild(){   // BG-10: 이벤트→projection 재생성(정합성 점검·복구)
+  const msg=$("#reconcileMsg");
+  if(!confirm("이벤트 로그로부터 엔티티·관계·원본 projection을 재생성합니다.\n(이벤트가 정본이므로 비파괴·멱등 — 정합성 점검·복구용)\n진행할까요?"))return;
+  msg.textContent="저장소 재생성 중…";
+  try{const r=await apiPost({step:"REBUILD_PROJECTION",input:{}});const x=r.result;
+    if(!x.ok){msg.textContent="⚠ 손상 이벤트 "+(x.corrupt_events||[]).length+"줄 — 보류됨(이벤트 로그 점검 필요)";return;}
+    msg.textContent=`재생성 완료: 엔티티 ${x.entities}·관계 ${x.relations}·원본 ${x.sources}`+((x.corrupt_events||[]).length?` (손상 ${x.corrupt_events.length}줄 건너뜀)`:"");
+    state.ents=null;await loadIssues();
+  }catch(e){msg.textContent="재생성 실패: "+(e.code?e.code+" ":"")+e.message;}
+}
+document.addEventListener("click",e=>{
+  const rev=e.target.closest(".run-box .cand [data-rev]");
+  if(rev){const box=rev.closest(".run-box");const run=findRun(box.dataset.run);if(!run)return;
+    const tid=rev.closest(".cand").dataset.tid;
+    const rv=run.reviews[tid]||(run.reviews[tid]={review:"accept"});
+    rv.review=rev.dataset.rev;
+    if(rv.review==="merge"){const ent=(run.proposal.entities||[]).find(x=>x.temp_id===tid);rv.merge_into=ent&&ent.merge_into;}
+    saveRuns();updateRunBox(run);return;}
+  const oprev=e.target.closest(".run-box .rb-op [data-oprev]");
+  if(oprev){const box=oprev.closest(".run-box");const run=findRun(box.dataset.run);if(!run)return;
+    const key=oprev.closest(".rb-op").dataset.opk;
+    run.opReviews=run.opReviews||{};run.opReviews[key]=oprev.dataset.oprev;
+    saveRuns();updateRunBox(run);return;}
+  const cbtn=e.target.closest("[data-commit]");
+  if(cbtn){commitRun(findRun(cbtn.dataset.commit));return;}
+  if(e.target.id==="btnRecApply"){applyReconcile();return;}
+  if(e.target.id==="btnDedupApply"){applyDedup();return;}
+  const rsrc=e.target.closest("[data-runsrc]");
+  if(rsrc){showRunSource(rsrc.dataset.runsrc);return;}
+  const recap=e.target.closest("[data-recap]");
+  if(recap){toggleRecap(recap.dataset.recap);return;}
+  const scard=e.target.closest(".sample-card[data-grp]");
+  if(scard){showSampleItem(scard.dataset.grp,+scard.dataset.i);return;}
+  const sfill=e.target.closest("[data-fill]");
+  if(sfill){e.preventDefault();fillSample();return;}
+  const del=e.target.closest("[data-del]");
+  if(del){deleteRun(del.dataset.del);return;}
+  const retry=e.target.closest("[data-retry]");
+  if(retry){retryRun(findRun(retry.dataset.retry));return;}
+  const erow=e.target.closest("tr[data-doc]");
+  if(erow){location.hash="#d/"+erow.dataset.doc;return;}
+  const htog=e.target.closest("[data-hidden-toggle]");
+  if(htog){state.showHidden=!state.showHidden;state.trashView=false;renderIssueList();return;}
+  const ttog=e.target.closest("[data-trash-toggle]");   // 휴지통 뷰 토글 (BG-9) — .fchip보다 먼저
+  if(ttog){state.trashView=!state.trashView;renderIssueList();return;}
+  const rst=e.target.closest("[data-restore]");
+  if(rst){restoreEntity(rst.dataset.restore);return;}
+  const fchip=e.target.closest("#issueFilter .fchip");
+  if(fchip){state.trashView=false;state.issueFilter=fchip.dataset.ft;renderIssueList();return;}
+  const tog=e.target.closest("[data-tog]");
+  if(tog){state.treeExpanded=state.treeExpanded||{};const k=tog.dataset.tog;
+    state.treeExpanded[k]=!state.treeExpanded[k];renderIssueList();return;}
+  const eEdit=e.target.closest("[data-edit]");
+  if(eEdit){state.editEntity=eEdit.dataset.edit;openEntity(eEdit.dataset.edit);return;}
+  const eSave=e.target.closest("[data-editsave]");
+  if(eSave){editEntitySave(eSave.dataset.editsave);return;}
+  const eCancel=e.target.closest("[data-editcancel]");
+  if(eCancel){state.editEntity=null;openEntity(eCancel.dataset.editcancel);return;}
+  const raw=e.target.closest("[data-rawsrc]");
+  if(raw){showRawSource(raw.dataset.rawsrc);return;}
+  const redo=e.target.closest("[data-redo]");
+  if(redo){redoEntity(redo.dataset.redo);return;}
+  const ehide=e.target.closest("[data-enthide]");
+  if(ehide){hideEntity(ehide.dataset.enthide,ehide.dataset.hidden!=="1");return;}
+  const edel=e.target.closest("[data-entdel]");
+  if(edel){deleteEntity(edel.dataset.entdel);return;}
+  const unhide=e.target.closest("[data-unhide]");
+  if(unhide){hideEntity(unhide.dataset.unhide,false);return;}
+  const irow=e.target.closest("tr[data-ent]");
+  if(irow){location.hash="#e/"+irow.dataset.ent;return;}
+  const back=e.target.closest("[data-back]");
+  if(back){e.preventDefault();state.editEntity=null;location.hash="#know";return;}
+  const hit=e.target.closest("[data-hit]");
+  if(hit){e.preventDefault();state.pendingHl=hit.dataset.q;
+    const id=hit.dataset.hit;
+    if(location.hash==="#d/"+id){openDoc(id,state.pendingHl);state.pendingHl=null;}
+    else location.hash="#d/"+id;
+    return;}
+  const toc=e.target.closest("[data-toc]");
+  if(toc){e.preventDefault();const t=document.getElementById(toc.dataset.toc);
+    if(t)t.scrollIntoView({block:"start"});return;}
+  const a=e.target.closest("a[data-lnk]");
+  if(a){const href=a.getAttribute("href");
+    if(/^[A-Za-z0-9_-]+$/.test(href)&&state.docs.some(d=>d.id===href)){
+      e.preventDefault();location.hash="#d/"+href;}
+    else if(/^https?:/.test(href)){a.target="_blank";}
+    else e.preventDefault();}
+});
+document.addEventListener("change",e=>{
+  const ed=e.target.closest(".run-box .cand [data-ed]");
+  if(ed){const box=ed.closest(".run-box");const run=findRun(box.dataset.run);if(!run)return;
+    const cand=ed.closest(".cand");const tid=cand.dataset.tid;
+    const rv=run.reviews[tid]||(run.reviews[tid]={review:"edit"});
+    rv.review="edit";rv.patch=rv.patch||{};rv.patch[ed.dataset.ed]=ed.value;saveRuns();
+    // 전면 재렌더하지 않고 해당 카드의 타입 배지만 갱신 — 재렌더가 포커스/입력을 삼키지 않도록.
+    if(ed.dataset.ed==="type"){const b=cand.querySelector(".ty");
+      if(b){b.textContent=ed.value;b.className="ty "+tyCls(ed.value);}}}
+});
+window.addEventListener("hashchange",route);
+loadManifest().then(route).catch(e=>{
+  $("#docRows").innerHTML='<tr><td colspan="5" class="empty">매니페스트 로드 실패: '+esc(e.message)+"</td></tr>";
+  route();
+});
+renderSamples();   // 입력 하단 샘플 시나리오 grid
+restoreRuns();   // 새로고침/재접속 시 히스토리 복원 + 실행 중 run 재폴링
+</script>
+</body>
+</html>
