@@ -14,6 +14,12 @@ ENTITY_TYPES = {"case", "issue", "finding", "initiative", "action", "pattern", "
 # status = 생애주기 8(순서형) + 특례 2(비순서: 보류/재발). M3 2축 결정(IMPROVEMENTS P1-6).
 _VALID_STATUS = set(store.STATUS_ORDER) | {"보류", "재발"}
 _VALID_SEVERITY = {"S1", "S2", "S3", "S4"}
+# 관계 유형 vocabulary (prompts/extract.md와 일치). HIER_TYPES = 이슈 트리에서 부모 계층을
+# 만드는 유형(자식 from → 부모 to). index.html의 HIER_REL과 동일 집합 — 함께 유지.
+REL_TYPES = {"part_of", "related_to", "derived_from", "addresses", "affects", "applies_to",
+             "similar_to", "duplicate_of", "recurrence_of", "instance_of", "supports",
+             "contradicts", "produces"}
+HIER_TYPES = {"recurrence_of", "duplicate_of", "part_of", "instance_of", "derived_from"}
 
 
 def _coerce_enums(obj, tid, warnings):
@@ -528,6 +534,42 @@ def handle_step(body):
         if res is None:
             raise StepError("E-1002", "복원 대상 아님(휴지통 상태 아님): %s" % eid, 404)
         return ok(res, ["ENTITY_RESTORE", "STOP"])
+
+    if step == "RELATION_ADD":   # 사람이 직접 관계(이슈 계층 포함) 추가 — 상세페이지 관계 편집기
+        frm, to = inp.get("from"), inp.get("to")
+        ty = inp.get("type", "related_to")
+        actor = inp.get("actor", "human")
+        if not (frm and to):
+            raise StepError("E-4101", "from·to 모두 필요", 422)
+        if frm == to:
+            raise StepError("E-4102", "자기 자신과는 관계를 만들 수 없음", 422)
+        if ty not in REL_TYPES:
+            raise StepError("E-4103", "미등록 관계 유형: %s" % ty, 422)
+        # 가드(중복·순환·양끝 active)+커밋을 store에서 단일 _LOCK으로 원자 실행 — 동시요청 TOCTOU 방지
+        rel, err = store.add_relation(frm, to, ty, HIER_TYPES, actor)
+        if err == "E-4104":
+            raise StepError("E-4104", "관계 양끝이 모두 active 엔티티여야 함", 404)
+        if err == "E-4105":
+            raise StepError("E-4105", "이미 있는 관계: %s -%s-> %s" % (frm, ty, to), 409)
+        if err == "E-4106":
+            raise StepError("E-4106", "계층 순환이 생김(대상이 이미 이 항목의 하위)", 409)
+        for eid in {frm, to}:   # 양끝 엔티티 검토 이력에 모두 남기도록 entity_id 태그
+            store.append_event({"event": "review.relation_add", "id": rel["id"], "entity_id": eid,
+                                "from": frm, "to": to, "rtype": ty, "actor": actor})
+        return ok({"relation": rel}, ["RELATION_ADD", "RELATION_REMOVE", "STOP"])
+
+    if step == "RELATION_REMOVE":   # 잘못 만든 관계를 소프트삭제(해제, active만) — 이력 보존
+        rid = inp.get("id")
+        actor = inp.get("actor", "human")
+        r = store.get_relation(rid)   # 엔드포인트 캡처(감사 이벤트용) — retire 전에
+        res = store.retire_relation(rid, actor)
+        if res is None:
+            raise StepError("E-4107", "관계 없음/active 아님(이미 해제/trashed): %s" % rid, 404)
+        for eid in {r.get("from"), r.get("to")} - {None}:
+            store.append_event({"event": "review.relation_remove", "id": rid, "entity_id": eid,
+                                "from": r.get("from"), "to": r.get("to"), "rtype": r.get("type"),
+                                "actor": actor})
+        return ok({"id": rid}, ["RELATION_ADD", "STOP"])
 
     if step == "RECLASSIFY":   # 유형 재분류 — 새 접두사 ID 발급 + 관계 이관 (M5)
         eid = inp.get("id")

@@ -258,7 +258,7 @@
   .rel-grp-n{background:var(--chip);border-radius:8px;padding:0 5px;font-size:9px}
   .rel-sub{font-weight:400;color:var(--muted);font-size:9.5px}
   /* 관계 = 4열 그리드 (유형 최좌측 · 이름 왼쪽정렬 · 발생·전송 세로정렬) */
-  .rel-grid{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;column-gap:10px;row-gap:2px;align-items:baseline}
+  .rel-grid{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto auto;column-gap:10px;row-gap:2px;align-items:baseline}
   .rel-grid .r-hd{font-size:8.5px;color:var(--muted);font-weight:700;font-family:var(--mono)}
   .rel-grid .r-dt{display:flex;align-items:baseline;gap:3px;white-space:nowrap}
   .rel-grid .r-dt .rdir{flex:none;color:var(--muted)}
@@ -266,6 +266,19 @@
   .rel-grid .r-occ,.rel-grid .r-cap{font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
   .rel-grid .r-mk{display:inline-block;width:9px;text-align:center}
   .rel-grid .mk-approx{color:var(--warn)}.rel-grid .mk-unc{color:var(--bad);font-weight:700}
+  .rel-x{border:none;background:none;color:var(--muted);cursor:pointer;font-size:11px;padding:0 2px;line-height:1;opacity:.55}
+  .rel-x:hover{color:var(--bad);opacity:1}
+  /* 관계 추가 편집기 */
+  .rel-add{margin-top:8px;padding:7px 8px;border:1px dashed var(--border);border-radius:6px;background:var(--chip)}
+  .rel-add-h{font-size:10px;color:var(--muted);font-weight:700;margin-bottom:5px}
+  .rel-add-sub{font-weight:400}
+  .rel-add-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+  .rel-add-from{font-family:var(--mono);font-size:10px;color:var(--muted);display:inline-flex;align-items:center;gap:3px;white-space:nowrap}
+  .rel-add-type{font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg)}
+  .rel-add-to{flex:1;min-width:120px;font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg)}
+  .rel-add-btn{white-space:nowrap}
+  .rel-add-preview{margin-top:5px;font-size:11px;line-height:1.5;min-height:1em}
+  .rel-add-preview b{color:var(--accent)}
   /* 토스트 */
   #toast{position:fixed;left:50%;bottom:calc(18px + var(--safe-bot));transform:translateX(-50%);
     background:var(--fg);color:var(--bg);font-size:11.5px;padding:7px 14px;border-radius:8px;z-index:100;
@@ -1320,6 +1333,9 @@ function statusBadge(s){if(!s)return"";
 function sevBadge(s){return s?`<span class="sev-badge sev-${esc(s)}">${esc(s)}</span>`:"";}
 // 부모(issue) — 다부모 허용. non-issue는 연결된 모든 issue, issue는 계층관계 to쪽 issue.
 const HIER_REL=new Set(["recurrence_of","duplicate_of","part_of","instance_of","derived_from"]);
+// 관계 편집기 유형 목록(pipeline REL_TYPES와 동일). 계층(HIER_REL) 5종을 앞에 둠 — part_of 기본.
+const REL_TYPES=["part_of","instance_of","recurrence_of","duplicate_of","derived_from",
+  "addresses","affects","applies_to","related_to","similar_to","supports","contradicts","produces"];
 function parentsOf(e){
   const byId=state.entById||{},ps=new Set(),isIssue=x=>byId[x]&&byId[x].type==="issue";
   (state.rels||[]).forEach(r=>{
@@ -1406,6 +1422,64 @@ function renderIssueList(){
     orphans.forEach(oid=>rows.push(issueRowHtml(byId[oid],0,false,false)));}
   $("#issueList").innerHTML=tableWrap(rows.join(""));
 }
+// ── 관계 편집기(상세페이지) — 사람이 직접 이슈 계층/관계를 만들고 해제 ──
+function relAddHtml(e){
+  if(e.state&&e.state!=="active")return "";   // 휴지통/병합 항목엔 관계 추가 안 함
+  const opts=REL_TYPES.map(t=>`<option value="${t}"${t==="part_of"?" selected":""}>${t}${HIER_REL.has(t)?" ⬆계층":""}</option>`).join("");
+  // 대상 후보: active·자기 제외 (context 좌표 앵커는 LINK/materialize 담당 → 여기선 제외)
+  const cands=(state.ents||[]).filter(x=>x.id!==e.id&&(x.state||"active")==="active"&&x.type!=="context");
+  const dl=cands.map(x=>`<option value="${escAttr(x.id+" · "+(x.title||""))}"></option>`).join("");
+  return `<div class="rel-add">
+    <div class="rel-add-h">관계 추가 <span class="rel-add-sub">(이 항목 → 대상)</span></div>
+    <div class="rel-add-row">
+      <span class="rel-add-from"><span class="ty-badge ${tyCls(e.type)}">${esc(e.type)}</span> ${esc(e.id)}</span>
+      <select class="rel-add-type" id="relAddType">${opts}</select>
+      <input class="rel-add-to" id="relAddTo" list="relAddDL" placeholder="대상 (ID·제목 검색)" autocomplete="off">
+      <datalist id="relAddDL">${dl}</datalist>
+      <button class="btn primary rel-add-btn" data-reladd="${escAttr(e.id)}">추가</button>
+    </div>
+    <div class="rel-add-preview" id="relAddPrev"></div>
+  </div>`;
+}
+function parseEntRef(v){   // "ID · 제목" 또는 "ID"·"제목" 입력에서 엔티티 ID 추출
+  v=(v||"").trim();if(!v)return null;
+  const m=v.match(/^[A-Za-z]+-\d+/);
+  if(m&&(state.entById||{})[m[0]])return m[0];
+  const hit=(state.ents||[]).find(x=>((x.id+" · "+(x.title||""))===v)||x.title===v);
+  return hit?hit.id:(m?m[0]:null);
+}
+function updateRelPreview(){
+  const prev=$("#relAddPrev"),tySel=$("#relAddType"),toIn=$("#relAddTo");
+  if(!prev||!tySel||!toIn)return;
+  const ty=tySel.value,to=parseEntRef(toIn.value),cur=state.curEnt;
+  const byId=state.entById||{},ce=byId[cur],te=to&&byId[to];
+  if(!to||!te){prev.innerHTML='<span class="dim">대상을 선택하면 결과를 미리 보여줍니다. 트리 계층의 부모는 항상 이슈입니다.</span>';return;}
+  const tt=esc(te.title||to),arrow=`<span class="dim">(${esc(cur)} —${esc(ty)}→ ${esc(to)})</span>`;
+  // parentsOf 규약과 일치: 트리 부모는 항상 '이슈'만 인정. 대상이 이슈가 아니면 '상위'라 하지 않는다.
+  const curIss=ce&&ce.type==="issue",tgtIss=te.type==="issue";
+  let msg;
+  if(HIER_REL.has(ty)&&tgtIss)  msg=`결과: <b>${tt}</b> 가 이 항목의 <b>상위</b>가 됩니다 ${arrow}`;
+  else if(tgtIss&&!curIss)      msg=`결과: 이 항목이 <b>${tt}</b> 의 <b>하위</b>로 묶입니다 ${arrow}`;
+  else if(curIss&&!tgtIss)      msg=`결과: <b>${tt}</b> 가 이 이슈의 <b>하위</b>로 묶입니다 ${arrow}`;
+  else                          msg=`관계만 기록됩니다 <span class="dim">— 이슈 트리 계층엔 반영 안 됨</span> ${arrow}`;
+  prev.innerHTML=msg;
+}
+async function addRelation(fromId){
+  const tySel=$("#relAddType"),toIn=$("#relAddTo");if(!tySel||!toIn)return;
+  const ty=tySel.value,to=parseEntRef(toIn.value);
+  if(!to){alert("대상을 선택하세요 (목록에서 ID·제목으로 검색).");return;}
+  if(to===fromId){alert("자기 자신과는 관계를 만들 수 없습니다.");return;}
+  try{await apiPost({step:"RELATION_ADD",input:{from:fromId,type:ty,to}});
+    await ensureIssueData(true);toast("관계를 추가했습니다");openEntity(fromId);}
+  catch(err){alert("관계 추가 실패: "+(err.code?err.code+" ":"")+err.message);}
+}
+async function removeRelation(rid){
+  if(!confirm("이 관계를 해제합니다 (소프트 삭제, 이력 보존). 진행할까요?"))return;
+  const cur=state.curEnt;
+  try{await apiPost({step:"RELATION_REMOVE",input:{id:rid}});
+    await ensureIssueData(true);toast("관계를 해제했습니다");if(cur)openEntity(cur);}
+  catch(err){alert("관계 해제 실패: "+(err.code?err.code+" ":"")+err.message);}
+}
 async function openEntity(id){
   const box=$("#entDetail");
   box.innerHTML='<span class="ent-back" data-back="1">‹ 이슈 목록</span><div class="ent-empty">불러오는 중…</div>';
@@ -1424,21 +1498,22 @@ async function openEntity(id){
   const groups={};
   rels.filter(r=>r.from===id||r.to===id).forEach(r=>{const o=r.from===id?r.to:r.from;const oe=byId[o];
     if(oe&&oe.type==="context")return;
-    (groups[r.type]=groups[r.type]||[]).push({o,dir:r.from===id?"out":"in"});});
+    (groups[r.type]=groups[r.type]||[]).push({o,dir:r.from===id?"out":"in",rid:r.id});});
   Object.values(groups).forEach(arr=>arr.sort((a,b)=>byTimeAsc(byId[a.o],byId[b.o])));
   const relCount=Object.values(groups).reduce((a,g)=>a+g.length,0);
   const dash='<span class="dim">—</span>';
   const relHtml=Object.keys(groups).sort().map(t=>{
-    const cells=groups[t].map(({o,dir})=>{const oe=byId[o],label=oe?(oe.title||o):o;
+    const cells=groups[t].map(({o,dir,rid})=>{const oe=byId[o],label=oe?(oe.title||o):o;
       const occD=oe&&oe.occurred_at?esc(String(oe.occurred_at).slice(0,10)):"";
       const mk=oe?(oe.date_confidence==="approximate"?'<span class="mk-approx">≈</span>':oe.date_confidence==="uncertain"?'<span class="mk-unc">?</span>':''):'';
       const cap=oe&&oe.captured_at?esc(fmtTs(oe.captured_at).slice(0,10)):"";
       return `<div class="r-dt"><span class="rdir">${dir==="out"?"→":"←"}</span>`+(oe?`<span class="ty-badge ${tyCls(oe.type)}">${esc(oe.type)}</span>`:'<span class="dim">?</span>')+`</div>`+
         `<a class="r-title" href="#e/${escAttr(o)}">${esc(label)}</a>`+
         `<div class="r-occ">${occD||dash}<span class="r-mk">${mk}</span></div>`+
-        `<div class="r-cap">${cap||dash}</div>`;}).join("");
+        `<div class="r-cap">${cap||dash}</div>`+
+        (rid?`<button class="rel-x" data-relremove="${escAttr(rid)}" title="이 관계 해제">✕</button>`:'<span></span>');}).join("");
     return `<div class="rel-grp"><div class="rel-grp-h">${esc(t)} <span class="rel-grp-n">${groups[t].length}</span></div>`+
-      `<div class="rel-grid"><div class="r-hd">유형</div><div class="r-hd">이름</div><div class="r-hd">발생</div><div class="r-hd">전송</div>${cells}</div></div>`;}).join("");
+      `<div class="rel-grid"><div class="r-hd">유형</div><div class="r-hd">이름</div><div class="r-hd">발생</div><div class="r-hd">전송</div><div class="r-hd"></div>${cells}</div></div>`;}).join("");
   const pmd=pmDerived(e),S=x=>esc(x==null?"":x),pmRows=[];
   if(isIss)pmRows.push(["상태",statusBadge(e.status)||"—"],["중요도",sevBadge(e.severity)||"—"]);
   pmRows.push(["공정명",S(e.process)],["제품",S(e.product)],["과제명",S(e.project)],
@@ -1470,17 +1545,19 @@ async function openEntity(id){
     (ctx.length?`<div class="ent-sec"><h4>버전 좌표 · context</h4><div class="ent-chips">`+
       ctx.map(x=>`<a class="ent-ctx" href="#e/${escAttr(x.id)}">◈ ${esc(x.title||x.id)}</a>`).join("")+`</div></div>`:'')+
     `<div class="ent-sec"><h4>관계 ${relCount} <span class="rel-sub">(type별·시간순)</span></h4>`+
-      (relCount?relHtml:'<div class="ent-empty">연결된 관계 없음</div>')+`</div>`+
+      (relCount?relHtml:'<div class="ent-empty">연결된 관계 없음</div>')+relAddHtml(e)+`</div>`+
     (e.tags&&e.tags.length?`<div class="ent-sec"><h4>태그</h4><div class="ent-refs">#${e.tags.map(esc).join(" #")}</div></div>`:'')+
     (e.source_refs&&e.source_refs.length?`<div class="ent-sec"><h4>출처</h4><div class="ent-refs">${e.source_refs.map(esc).join("  ")}</div></div>`:'')+
     `<div class="ent-sec"><h4>메타</h4><div class="ent-kv">추출기 ${esc((e.produced_by&&e.produced_by.name)||'?')} · 갱신 ${esc(e.updated_at||'')}</div></div>`+
     `<div class="ent-sec"><h4>검토 이력</h4><div id="entHist" class="hist-list"><span class="ent-empty">불러오는 중…</span></div></div>`+
     (srcIds.length?`<div class="ent-sec"><button class="ent-raw-btn" data-rawsrc="${escAttr(srcIds.join(','))}">📄 원문 보기 (${srcIds.length})</button><div id="entRaw"></div></div>`:'');
   loadHistory(id);
+  updateRelPreview();
 }
 const HIST_LBL={"review.accept":"커밋 · 수락","review.edit":"커밋 · 수정","review.merge":"커밋 · 병합",
   "review.reject":"거절","entity.create":"생성","entity.update":"편집","entity.reclassify":"재분류",
-  "entity.merge":"병합 흡수됨","entity.retire":"회수(재추출)"};
+  "entity.merge":"병합 흡수됨","entity.retire":"회수(재추출)",
+  "review.relation_add":"관계 추가","review.relation_remove":"관계 해제"};
 async function loadHistory(id){
   const el=$("#entHist");if(!el)return;
   try{const h=(await api("api/history?entity="+encodeURIComponent(id))).history||[];el.innerHTML=histHtml(h);}
@@ -1490,6 +1567,7 @@ function histHtml(h){
   if(!h.length)return '<span class="ent-empty">이력 없음</span>';
   return h.map(x=>{
     const lbl=HIST_LBL[x.kind]||esc(x.kind),det=[];
+    if(x.rel)det.push((x.rel.type||"")+" "+(x.rel.from||"")+"→"+(x.rel.to||""));
     if(x.changed&&x.changed.length)det.push("필드 "+x.changed.join(", "));
     if(x.reclassified_from)det.push("원본 "+x.reclassified_from);
     if(x.merged_into)det.push("→ "+x.merged_into);
@@ -1743,6 +1821,10 @@ document.addEventListener("click",e=>{
   if(ehide){hideEntity(ehide.dataset.enthide,ehide.dataset.hidden!=="1");return;}
   const edel=e.target.closest("[data-entdel]");
   if(edel){deleteEntity(edel.dataset.entdel);return;}
+  const radd=e.target.closest("[data-reladd]");
+  if(radd){addRelation(radd.dataset.reladd);return;}
+  const rrem=e.target.closest("[data-relremove]");
+  if(rrem){removeRelation(rrem.dataset.relremove);return;}
   const unhide=e.target.closest("[data-unhide]");
   if(unhide){hideEntity(unhide.dataset.unhide,false);return;}
   const irow=e.target.closest("tr[data-ent]");
@@ -1774,6 +1856,9 @@ document.addEventListener("change",e=>{
     // 전면 재렌더하지 않고 해당 카드의 타입 배지만 갱신 — 재렌더가 포커스/입력을 삼키지 않도록.
     if(ed.dataset.ed==="type"){const b=cand.querySelector(".ty");
       if(b){b.textContent=ed.value;b.className="ty "+tyCls(ed.value);}}}
+});
+document.addEventListener("input",e=>{   // 관계 편집기 결과 미리보기
+  if(e.target.id==="relAddType"||e.target.id==="relAddTo")updateRelPreview();
 });
 window.addEventListener("hashchange",route);
 loadManifest().then(route).catch(e=>{

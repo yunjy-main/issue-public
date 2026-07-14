@@ -43,7 +43,21 @@
     "model": "internal-model-id",
     "headers": {"Authorization": "Bearer <사내-토큰-또는-헤더>"},
     "extra_payload": {"temperature": 0},
+    "response_schema": false,
     "timeout": 60,
-    "producer": {"type": "llm", "name": "internal-llm", "version": "0.1"}
-  }
+    "debug": false,
+    "producer": {"type": "llm", "name": "internal-llm", "version": "0.1"},
+    "_response_schema": "true면 요청 body에 response_format(json_schema)를 붙여 구조화 출력을 강제한다. claude-proxy/OpenAI엔 신뢰성↑지만, **이걸 지원 안 하는 사내 LLM은 무시·오류·지연**할 수 있다. '직접 호출은 1~4초인데 서버 경유만 timeout' 이면 십중팔구 이것 → false로 두거나 키 자체를 빼라(파서는 자유형식 JSON도 관대 처리).",
+    "_debug": "true면 서버 stderr에 LLM 요청/응답 '본문 전문'을 출력. 환경변수로도 켠다: `ISSUE_LLM_DEBUG=1`(본문 전문, 토큰은 마스킹), `ISSUE_LLM_DEBUG=secrets`(헤더 토큰까지 원문). 기본(끔)에도 요청 요약(URL·바이트·response_format 여부)·응답(status·경과)·실패 상세(실제 예외·경과·URL)는 항상 stderr에 남는다.",
+    "_headers": "사내 인증이 Bearer 토큰이 아니라 별도 헤더(X-Api-Key 등)면 headers에 그대로 넣는다. 여러 개 가능."
+  },
+
+  "_troubleshoot_timeout": [
+    "증상: 사내 LLM에 직접 curl하면 1~4초, issue 서버 경유만 timeout.",
+    "1) `ISSUE_LLM_DEBUG=1 python server.py` 로 띄우고 추출을 한 번 실행한다.",
+    "2) stderr의 `-> EXTRACT POST <url>` 줄에서 실제 URL이 사내 endpoint와 정확히 같은지 확인(경로/슬래시 포함).",
+    "3) `body(전문)`을 직접 호출하던 요청과 비교한다. 특히 `response_format`(json_schema)가 붙어 있으면 사내 LLM이 이걸 못 다뤄 지연/멈춤일 수 있다 → llm.json에서 response_schema를 빼거나 false로.",
+    "4) `[X] EXTRACT 실패 | <경과>s | <url> | <예외>` 줄이 실제 원인(연결 거부/타임아웃/TLS/인증)을 보여준다. 경과가 timeout값과 같으면 응답이 안 온 것(4번=response_format 또는 네트워크), 즉시 실패면 URL/인증 문제.",
+    "5) 헤더 인증을 확인하려면 `ISSUE_LLM_DEBUG=secrets` (토큰 원문 노출 — 신뢰된 로컬에서만)."
+  ]
 }

@@ -293,8 +293,11 @@ def entity_history(eid):
     for ev in _read_events():
         et = ev.get("event", "")
         if et.startswith("review.") and ev.get("entity_id") == eid:
-            out.append({"ts": ev.get("ts"), "kind": et, "decision": ev.get("decision"),
-                        "changed": ev.get("changed_fields") or [], "actor": ev.get("actor", "?")})
+            row = {"ts": ev.get("ts"), "kind": et, "decision": ev.get("decision"),
+                   "changed": ev.get("changed_fields") or [], "actor": ev.get("actor", "?")}
+            if et in ("review.relation_add", "review.relation_remove"):
+                row["rel"] = {"from": ev.get("from"), "to": ev.get("to"), "type": ev.get("rtype")}
+            out.append(row)
         elif et == "entity.upsert" and ev.get("id") == eid:
             data = ev.get("data") or {}
             changed = []
@@ -799,6 +802,54 @@ def _retire_relation(r, actor):
     r = dict(r)
     r["state"] = "merged"
     upsert_relation(r, actor)
+
+
+def add_relation(frm, to, rtype, hier_types, actor="human"):
+    """관계를 **원자적으로** 추가(가드+커밋 전체를 단일 _LOCK 하에). 반환:
+    (relation, None) 성공 | (None, error_code) 위반. 가드 — 양끝 active, (from,type,to)
+    활성 중복 없음, 계층(hier_types 유형)이면 순환 없음. read-modify-write를 한 임계구역으로
+    묶어 ThreadingHTTPServer 동시요청의 TOCTOU 경합(중복·순환 가드 우회)을 막는다.
+    순환 판정·중복·부모 그래프는 **active 관계만**(list_relations 기본) 사용."""
+    with _LOCK:
+        fe, te = get_entity(frm), get_entity(to)
+        if not (fe and fe.get("state") == "active" and te and te.get("state") == "active"):
+            return None, "E-4104"
+        rels = list_relations()   # active만 (merged/trashed 제외)
+        for r in rels:
+            if r.get("from") == frm and r.get("to") == to and r.get("type") == rtype:
+                return None, "E-4105"
+        if rtype in hier_types:   # 계층 순환: to에서 부모(자식→부모) 방향으로 올라가 frm에 닿으면 순환
+            parents = {}
+            for r in rels:
+                if r.get("type") in hier_types:
+                    parents.setdefault(r.get("from"), set()).add(r.get("to"))
+            seen, stack = set(), [to]
+            while stack:
+                cur = stack.pop()
+                for p in parents.get(cur, ()):
+                    if p == frm:
+                        return None, "E-4106"
+                    if p not in seen:
+                        seen.add(p)
+                        stack.append(p)
+        rid = next_id("REL")
+        rel = upsert_relation(
+            {"id": rid, "from": frm, "type": rtype, "to": to, "source_refs": [],
+             "confidence": "medium", "state": "active",
+             "produced_by": {"type": "human", "name": actor, "version": "manual"}}, actor)
+        return rel, None
+
+
+def retire_relation(rid, actor="human"):
+    """관계 하나를 소프트삭제(state=merged). 상세페이지 관계 편집기의 '관계 해제'용.
+    **active 관계만** 해제한다 — trashed 관계(인접 엔티티 삭제의 부수효과)를 merged로 뒤집으면
+    restore_entity가 그 관계를 복원 못 해 영구 소실되므로, active가 아니면 None(변경 없음)."""
+    with _LOCK:
+        r = get_relation(rid)
+        if not r or r.get("state") != "active":
+            return None
+        _retire_relation(r, actor)
+        return rid
 
 
 def redirect_relations(absorbed_ids, survivor_id, actor="human"):

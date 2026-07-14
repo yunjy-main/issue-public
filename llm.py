@@ -4,6 +4,8 @@
 import json
 import os
 import re
+import sys
+import time
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -20,6 +22,83 @@ def load_llm_config():
         with open(p, encoding="utf-8") as f:
             return json.load(f)
     return {"mode": "stub", "producer": {"type": "tool", "name": "stub-extractor", "version": "0.1"}}
+
+
+# ---------- LLM 요청/응답 로깅 (사내 LLM 연동 디버깅) ----------
+# 항상: 요청 요약(URL·바이트·response_format 여부)·응답 요약(status·경과·바이트)·실패 상세(실제 예외·경과·URL).
+# ISSUE_LLM_DEBUG=1        → 요청/응답 '본문 전문'과 헤더까지 출력(토큰은 마스킹).
+# ISSUE_LLM_DEBUG=secrets  → 위 + 헤더의 토큰/키까지 마스킹 없이 출력(신뢰된 로컬 디버깅에서만!).
+# llm.json에 "debug": true 로도 본문 전문을 켤 수 있다.
+def _dbg_level():
+    return (os.environ.get("ISSUE_LLM_DEBUG", "") or "").strip().lower()
+
+
+def _dbg_full(cfg=None):
+    return _dbg_level() in ("1", "true", "yes", "on", "full", "secrets") or bool((cfg or {}).get("debug"))
+
+
+def _llog(msg):
+    # Windows 콘솔(cp949) 등에서 비인코딩 문자로 UnicodeEncodeError가 나면 로그가 사라지지 않도록
+    # 스트림 인코딩으로 재인코딩(errors=replace)해서라도 반드시 출력한다. 마커는 ASCII만 쓴다.
+    line = "[LLM] " + msg + "\n"
+    try:
+        sys.stderr.write(line)
+        sys.stderr.flush()
+    except UnicodeEncodeError:
+        try:
+            enc = getattr(sys.stderr, "encoding", None) or "utf-8"
+            sys.stderr.buffer.write(line.encode(enc, "replace"))
+            sys.stderr.buffer.flush()
+        except Exception:  # noqa
+            pass
+    except Exception:  # noqa — 로깅이 절대 파이프라인을 깨지 않게
+        pass
+
+
+def _redact_headers(headers):
+    """헤더의 토큰/키류를 마스킹(첫10·끝4·길이만). ISSUE_LLM_DEBUG=secrets면 원문 노출."""
+    if _dbg_level() == "secrets":
+        return dict(headers or {})
+    out = {}
+    for k, v in (headers or {}).items():
+        kl = str(k).lower()
+        if kl in ("authorization", "cookie") or any(t in kl for t in ("token", "key", "secret", "auth", "apikey")):
+            s = str(v)
+            out[k] = (s[:10] + "…[마스킹 %d자]…" % len(s) + s[-4:]) if len(s) > 18 else "…[마스킹 %d자]…" % len(s)
+        else:
+            out[k] = v
+    return out
+
+
+def _log_llm_request(tag, url, headers, body_bytes, cfg):
+    """전송 '직전'에 요청 전문을 남긴다 — 타임아웃돼도 무엇을 어디로 보냈는지 로그에 남는다."""
+    body = body_bytes.decode("utf-8", "replace") if isinstance(body_bytes, (bytes, bytearray)) else str(body_bytes)
+    nbytes = len(body_bytes) if isinstance(body_bytes, (bytes, bytearray)) else len(body.encode("utf-8"))
+    has_rf = '"response_format"' in body
+    _llog("-> %s POST %s | body %d bytes | response_format=%s | timeout=%ss"
+          % (tag, url, nbytes, "YES" if has_rf else "no", cfg.get("timeout", 60)))
+    if has_rf:
+        _llog("  [!] %s 요청에 response_format(json_schema)가 포함됨 — 사내 LLM이 미지원/지연하면 "
+              "직접 호출은 빠른데 서버 경유만 timeout 날 수 있음. llm.json에서 \"response_schema\" 제거로 끌 수 있음." % tag)
+    if _dbg_full(cfg):
+        _llog("  headers: %s" % json.dumps(_redact_headers(headers), ensure_ascii=False))
+        _llog("  body(전문):\n%s" % body)
+    else:
+        _llog("  body(head 800 - 전문은 ISSUE_LLM_DEBUG=1):\n%s" % body[:800])
+
+
+def _log_llm_response(tag, status, elapsed, body_text, cfg):
+    _llog("<- %s HTTP %s | %.2fs | %d bytes" % (tag, status, elapsed, len((body_text or "").encode("utf-8"))))
+    if _dbg_full(cfg):
+        _llog("  resp(전문):\n%s" % body_text)
+    else:
+        _llog("  resp(head 800):\n%s" % (body_text or "")[:800])
+
+
+def _log_llm_error(tag, url, elapsed, exc, extra=""):
+    """실패 시 실제 예외 메시지·경과·URL을 남긴다(기존엔 type명만 남겨 디버깅 불가였음)."""
+    _llog("[X] %s 실패 | %.2fs | %s | %s: %s%s"
+          % (tag, elapsed, url, type(exc).__name__, exc, ("\n  " + extra) if extra else ""))
 
 
 # ---------- 문장/라인 분할 (source_refs용 위치 보존) ----------
@@ -322,25 +401,37 @@ def _http_extract(text, vocab, source_id, cfg, ref_time=None, retrieved=None):
                                       "json_schema": {"name": "candidates", "schema": _EXTRACT_SCHEMA}}
     # 사내 LLM이 sampling 파라미터를 요구하면 config로만 추가 (Anthropic엔 temperature 금지)
     payload.update(cfg.get("extra_payload", {}))
-    req = urllib.request.Request(
-        url, data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", **cfg.get("headers", {})})
+    headers = {"Content-Type": "application/json", **cfg.get("headers", {})}
+    data = json.dumps(payload).encode("utf-8")
+    timeout = cfg.get("timeout", 60)
     import urllib.error
+    _log_llm_request("EXTRACT", url, headers, data, cfg)   # 전송 직전 — 타임아웃돼도 요청 전문이 남음
+    req = urllib.request.Request(url, data=data, headers=headers)
+    t0 = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=cfg.get("timeout", 60)) as r:
-            resp = json.loads(r.read().decode("utf-8"))
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode("utf-8")
+            _log_llm_response("EXTRACT", getattr(r, "status", getattr(r, "code", "?")), time.time() - t0, raw, cfg)
+            resp = json.loads(raw)
     except urllib.error.HTTPError as e:   # 프록시/LLM이 non-2xx — 본문을 남겨 진단 가능하게
         body = ""
         try:
-            body = e.read().decode("utf-8", "replace")[:220]
+            body = e.read().decode("utf-8", "replace")
         except Exception:  # noqa
             pass
-        raise LLMError("E-2001", "LLM HTTP %s: %s" % (e.code, body))
-    except Exception as e:  # noqa
-        raise LLMError("E-2001", "LLM 호출 실패: %s" % type(e).__name__)
+        _log_llm_error("EXTRACT", url, time.time() - t0, e, "HTTP %s · resp body: %s" % (e.code, body[:800]))
+        raise LLMError("E-2001", "LLM HTTP %s: %s" % (e.code, body[:220]))
+    except Exception as e:  # noqa — 실제 예외 메시지·경과시간을 남겨 디버깅 가능하게
+        _log_llm_error("EXTRACT", url, time.time() - t0, e,
+                       "timeout=%ss. 직접 호출은 빠른데 여기서만 느리면 위 요청 body의 response_format을 의심(끄려면 "
+                       "llm.json에서 \"response_schema\" 제거). 전문 로그: ISSUE_LLM_DEBUG=1" % timeout)
+        raise LLMError("E-2001", "LLM 호출 실패(%s, %.1fs, %s): %s"
+                       % (type(e).__name__, time.time() - t0, url, e))
     try:
         content = resp["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
+        _llog("  [!] EXTRACT 응답에 choices[0].message.content 없음 — resp 최상위 키: %s" % list(resp)[:12]
+              if isinstance(resp, dict) else "  [!] EXTRACT 응답이 dict 아님: %s" % type(resp).__name__)
         raise LLMError("E-2002", "LLM 응답 형식 예상 밖")
     return _parse_candidates(content, text, vocab)
 
@@ -617,15 +708,24 @@ def extract(text, vocab, source_id, ref_time=None, retrieved=None):
     폴백 시 result['fallback']에 사유를 남겨 UI가 실제 추출기를 표시한다."""
     cfg = load_llm_config()
     mode = cfg.get("mode", "stub")
+    _llog("extract: mode=%s model=%s url=%s timeout=%ss response_schema=%s retrieved=%d src=%s"
+          % (mode, cfg.get("model"), cfg.get("url"), cfg.get("timeout", 60),
+             bool(cfg.get("response_schema")), len(retrieved or []), source_id))
     if mode not in _PROVIDERS:
+        _llog("  -> 미지원 mode '%s' -> stub 폴백" % mode)
         return stub_extract(text, vocab, source_id), dict(_STUB_PRODUCER)
+    t0 = time.time()
     try:
         result = _PROVIDERS[mode](text, vocab, source_id, cfg, ref_time, retrieved)
+        _llog("extract: %s 성공 %.2fs (엔티티 %d·관계 %d)"
+              % (mode, time.time() - t0, len(result.get("entities", []) or []), len(result.get("relations", []) or [])))
         return result, cfg.get("producer", {"type": "llm", "name": mode, "version": "?"})
     except LLMError as e:
         if cfg.get("fallback", "stub") != "stub":
+            _llog("extract: %s 실패(폴백 없음) %.2fs %s: %s" % (mode, time.time() - t0, e.code, e))
             raise
         # LLM 미가용(인증 없음 등) → stub으로 강등하되 사유를 명시
+        _llog("extract: %s 실패 -> stub 폴백 %.2fs %s: %s" % (mode, time.time() - t0, e.code, e))
         result = stub_extract(text, vocab, source_id)
         result["fallback"] = {"from": mode, "code": e.code, "reason": str(e)}
         producer = dict(_STUB_PRODUCER); producer["fallback_from"] = mode
@@ -667,18 +767,26 @@ def detect_operations(text, retrieved, cfg=None):
                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                "response_format": {"type": "json_schema", "json_schema": {"name": "ops", "schema": _OP_SCHEMA}}}
     import urllib.request
+    url = cfg.get("url")
+    headers = {"Content-Type": "application/json", **cfg.get("headers", {})}
+    body = json.dumps(payload).encode("utf-8")
+    timeout = cfg.get("timeout", 60)
     # 부하로 프록시가 CLI를 직렬화하면 간헐 502가 날 수 있어 1회 재시도(명령 유실 방지).
     data = None
     for attempt in range(2):
+        _log_llm_request("DETECT_OPS(시도 %d)" % (attempt + 1), url, headers, body, cfg)
+        t0 = time.time()
         try:
-            req = urllib.request.Request(cfg.get("url"), data=json.dumps(payload).encode("utf-8"),
-                                         headers={"Content-Type": "application/json", **cfg.get("headers", {})})
-            with urllib.request.urlopen(req, timeout=cfg.get("timeout", 60)) as r:
-                resp = json.loads(r.read().decode("utf-8"))
+            req = urllib.request.Request(url, data=body, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                raw = r.read().decode("utf-8")
+                _log_llm_response("DETECT_OPS", getattr(r, "status", "?"), time.time() - t0, raw, cfg)
+                resp = json.loads(raw)
             content = resp["choices"][0]["message"]["content"]
             data = json.loads(content) if content.strip()[:1] == "{" else {}
             break
-        except Exception:  # noqa — 명령 감지 실패는 치명적 아님 (상세 화면 삭제 버튼이 확정 경로)
+        except Exception as e:  # noqa — 명령 감지 실패는 치명적 아님 (상세 화면 삭제 버튼이 확정 경로)
+            _log_llm_error("DETECT_OPS(시도 %d)" % (attempt + 1), url, time.time() - t0, e)
             data = None
     if data is None:
         return []

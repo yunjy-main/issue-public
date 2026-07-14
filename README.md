@@ -54,6 +54,19 @@ python scripts\selftest.py
 
 세 모드 모두 같은 프롬프트 + **관대 파서**(코드펜스·JSON배열·`{entities,relations}`·JSONL, 한 줄 실패 무시)를 쓴다.
 
+## LLM 연동 디버깅 (사내 LLM 붙일 때)
+
+직접 호출은 빠른데 **서버 경유만 timeout** 이면, 서버가 만드는 요청이 직접 호출과 다른 것이다(대개 `response_format`). 실제 전송 전문을 로그로 본다:
+
+```powershell
+$env:ISSUE_LLM_DEBUG=1; python server.py     # 요청/응답 본문 전문을 stderr에 출력 (토큰은 마스킹)
+```
+
+- 기본(플래그 없음)에도 **요청 요약(URL·바이트·`response_format` 여부) · 응답(status·경과) · 실패 상세(실제 예외·경과·URL)** 는 항상 stderr에 남는다.
+- `ISSUE_LLM_DEBUG=1` → 요청/응답 **본문 전문** + 헤더(토큰 마스킹). `llm.json`에 `"debug": true` 로도 켤 수 있다.
+- `ISSUE_LLM_DEBUG=secrets` → 헤더 토큰까지 원문 노출(신뢰된 로컬 디버깅에서만).
+- **핵심**: 로그의 `body(전문)`에 `response_format`(json_schema)가 붙어 있고 사내 LLM이 이를 미지원하면 지연/멈춤이 생긴다 → `llm.json`에서 `"response_schema"`를 빼거나 `false`로. (자세한 순서는 `llm.json.example`의 `_troubleshoot_timeout`.)
+
 ## 설계 노트
 
 - **버전 좌표**: 이슈의 진짜 주어는 단일 이름이 아니라 "버전 조합"(제품 리비전 × 규칙셋 × 구성요소 × 과제)이다. context 엔티티가 이 좌표를 앵커한다.
