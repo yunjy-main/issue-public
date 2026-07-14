@@ -46,7 +46,9 @@
     "response_schema": false,
     "timeout": 60,
     "debug": false,
+    "fallback": "none",
     "producer": {"type": "llm", "name": "internal-llm", "version": "0.1"},
+    "_fallback": "기본 'none' — LLM 호출이 실패하면 그대로 에러(E-xxxx)로 드러낸다. **stub으로 자동 폴백하지 않는다**(실패인데 stub 결과로 성공처럼 보이면 위험). 예전 동작을 원하면 'stub'으로 명시(opt-in). mode를 'stub'으로 두면 항상 오프라인 stub(무설정 기본).",
     "_response_schema": "true면 요청 body에 response_format(json_schema)를 붙여 구조화 출력을 강제한다. claude-proxy/OpenAI엔 신뢰성↑지만, **이걸 지원 안 하는 사내 LLM은 무시·오류·지연**할 수 있다. '직접 호출은 1~4초인데 서버 경유만 timeout' 이면 십중팔구 이것 → false로 두거나 키 자체를 빼라(파서는 자유형식 JSON도 관대 처리).",
     "_debug": "true면 서버 stderr에 LLM 요청/응답 '본문 전문'을 출력. 환경변수로도 켠다: `ISSUE_LLM_DEBUG=1`(본문 전문, 토큰은 마스킹), `ISSUE_LLM_DEBUG=secrets`(헤더 토큰까지 원문). 기본(끔)에도 요청 요약(URL·바이트·response_format 여부)·응답(status·경과)·실패 상세(실제 예외·경과·URL)는 항상 stderr에 남는다.",
     "_headers": "사내 인증이 Bearer 토큰이 아니라 별도 헤더(X-Api-Key 등)면 headers에 그대로 넣는다. 여러 개 가능."

@@ -702,18 +702,24 @@ def describe_engines(vocab=None):
 
 
 def extract(text, vocab, source_id, ref_time=None, retrieved=None):
-    """(result, producer). 설정된 LLM을 우선 쓰되 실패하면 stub으로 폴백(기본).
+    """(result, producer). 설정된 LLM으로 추출한다.
     ref_time = 프롬프트 전송 시점(캡처 시각) — 상대 일자 환산의 기준으로 LLM에 전달.
     retrieved = RETRIEVE 카드 목록 — '관련 기존 지식'으로 프롬프트에 첨부(M5).
-    폴백 시 result['fallback']에 사유를 남겨 UI가 실제 추출기를 표시한다."""
+
+    **stub 폴백은 기본 OFF** (운영 결정): LLM 실패를 stub 결과로 조용히 덮으면 실제로는 실패인데
+    성공처럼 보이므로 위험하다. LLM 실패는 그대로 raise 해 UI/로그에 드러낸다. stub 기능 자체는
+    보존한다 — (1) `mode:"stub"`(오프라인·selftest·무설정 기본) 명시 사용, (2) `"fallback":"stub"`을
+    llm.json에 **명시**하면 예전 폴백 동작을 opt-in으로 되살릴 수 있다."""
     cfg = load_llm_config()
     mode = cfg.get("mode", "stub")
     _llog("extract: mode=%s model=%s url=%s timeout=%ss response_schema=%s retrieved=%d src=%s"
           % (mode, cfg.get("model"), cfg.get("url"), cfg.get("timeout", 60),
              bool(cfg.get("response_schema")), len(retrieved or []), source_id))
-    if mode not in _PROVIDERS:
-        _llog("  -> 미지원 mode '%s' -> stub 폴백" % mode)
+    if mode == "stub":   # 명시적 stub(오프라인·selftest·무설정 기본) — 보존
         return stub_extract(text, vocab, source_id), dict(_STUB_PRODUCER)
+    if mode not in _PROVIDERS:   # 오타/미지원 mode → 조용히 stub 하지 않고 명확히 실패
+        _llog("  [X] 미지원 mode '%s' — http/anthropic/cli/stub 중이어야 함(stub 자동대체 안 함)" % mode)
+        raise LLMError("E-2008", "미지원 LLM mode '%s' (http/anthropic/cli/stub 중 하나)" % mode)
     t0 = time.time()
     try:
         result = _PROVIDERS[mode](text, vocab, source_id, cfg, ref_time, retrieved)
@@ -721,11 +727,12 @@ def extract(text, vocab, source_id, ref_time=None, retrieved=None):
               % (mode, time.time() - t0, len(result.get("entities", []) or []), len(result.get("relations", []) or [])))
         return result, cfg.get("producer", {"type": "llm", "name": mode, "version": "?"})
     except LLMError as e:
-        if cfg.get("fallback", "stub") != "stub":
-            _llog("extract: %s 실패(폴백 없음) %.2fs %s: %s" % (mode, time.time() - t0, e.code, e))
+        # stub 폴백 기본 OFF — 실패를 조용히 stub으로 덮지 않는다. 되살리려면 "fallback":"stub" 명시.
+        if cfg.get("fallback", "none") != "stub":
+            _llog("extract: %s 실패(stub 폴백 없음) %.2fs %s: %s" % (mode, time.time() - t0, e.code, e))
             raise
-        # LLM 미가용(인증 없음 등) → stub으로 강등하되 사유를 명시
-        _llog("extract: %s 실패 -> stub 폴백 %.2fs %s: %s" % (mode, time.time() - t0, e.code, e))
+        _llog("extract: %s 실패 -> stub 폴백(fallback:stub 명시적 opt-in) %.2fs %s: %s"
+              % (mode, time.time() - t0, e.code, e))
         result = stub_extract(text, vocab, source_id)
         result["fallback"] = {"from": mode, "code": e.code, "reason": str(e)}
         producer = dict(_STUB_PRODUCER); producer["fallback_from"] = mode
