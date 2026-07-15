@@ -47,8 +47,8 @@ python scripts\selftest.py
 
 파일이 없으면 `stub`(오프라인 결정론). `llm.json.example`을 복사해 `mode`를 바꾼다.
 
-- **OpenAI 호환 / 로컬·조직 내 LLM** (`mode:http`): `{"mode":"http","url":"http://<endpoint>/v1/chat/completions","model":"...","response_schema":true}`.
-  로컬 OSS(`ollama run ...`, LM Studio)나 조직 내 LLM에 같은 경로로 붙는다.
+- **OpenAI 호환 / 로컬·조직 내 LLM** (`mode:http`): `{"mode":"http","url":"http://<endpoint>/v1/chat/completions","model":"..."}`.
+  로컬 OSS(`ollama run ...`, LM Studio)나 조직 내 LLM에 같은 경로로 붙는다. **`response_schema`는 기본 off** — Structured Outputs(구조화 출력 강제)를 지원하는 엔드포인트(OpenAI·claude-proxy 등)에서만 `true`로 켜는 **고급 옵션**이고, 사내 LLM 등 미지원 스택에선 생략한다(관대 파서가 자유형식 JSON을 처리).
 - **Anthropic API** (`mode:anthropic`): `pip install anthropic` + `ANTHROPIC_API_KEY`. 지연 import.
 - **Claude CLI** (`mode:cli`, 또는 `tools/claude_proxy.py`로 OpenAI 호환 래핑 후 `mode:http`): host 인증, API 키 불필요.
 
