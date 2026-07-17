@@ -330,6 +330,7 @@
   .plan-row:hover{background:var(--hover)}
   .plan-sign{font-family:var(--mono);font-weight:700;width:9px;text-align:center}
   .op-c .plan-sign{color:var(--ok,#3a9)}.op-u .plan-sign{color:var(--warn)}.op-s{opacity:.5}
+  .op-d .plan-sign{color:var(--bad)}.op-d .plan-op{color:var(--bad)}
   .plan-op{font-family:var(--mono);font-size:9px;color:var(--muted);width:42px}
   .plan-det{color:var(--muted);font-size:10px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .plan-warn{color:var(--warn);font-size:9.5px}
@@ -645,33 +646,26 @@
   <section class="screen" id="scrMst" hidden>
     <div class="mst-bar">
       <b>기준정보</b>
-      <span class="dim">사람이 만드는 좌표축 — node → process · product · project. 이슈·사건은 이 좌표에만 붙는다.</span>
-      <button class="btn" id="btnMstSeed">📥 시드 붙여넣기</button>
+      <span class="dim">사람이 만드는 좌표축. 저장은 entity{kind}+관계 그래프 — node→process는 narrower_of 관계, N:M·새 kind는 이후 주입.</span>
+      <button class="btn" id="btnMstSeed">🗣 자연어/붙여넣기 CRUD</button>
       <span class="mstmsg" id="mstMsg"></span>
     </div>
     <div class="seed-panel" id="mstSeedPanel" hidden>
-      <div class="seed-h">정형 시드
-        <span class="dim">JSON · YAML · TSV/CSV(헤더 필요) — <b>결정론 파싱</b>(LLM 안 씀). 자유형식은 감지 실패로 알려준다.</span>
+      <div class="seed-h">원문 + 가이드 → LLM 해석 → 계획
+        <span class="dim">아무 형식이나 붙여넣거나 자연어로 지시하세요(엑셀·JSON·메일·문장 무관). <b>해석은 LLM</b>, 현재 마스터와의 대조·계획·적용은 결정론.</span>
       </div>
-      <textarea id="mstSeedText" spellcheck="false" placeholder='사내 마스터에서 복사해 그대로 붙여넣으세요.
+      <textarea id="mstSeedText" spellcheck="false" placeholder='아무 형식이나 그대로 붙여넣거나 자연어로 지시:
 
-JSON:   {"nodes":[{"id":"N7","aliases":["7nm","7 나노"]}],
-         "processes":[{"id":"N7P","node":"N7","aliases":["N7+"]}]}
-
-YAML:   nodes:
-          - id: N7
-            aliases: [7nm, 7 나노]
-        processes:
-          - id: N7P
-            node: N7
-            aliases:
-              - N7+
-
-TSV:    type	id	node	aliases
-        process	N7P	N7	N7+, N7 plus'></textarea>
+· 붙여넣기: 사내 마스터 표/JSON/엑셀 복사 그대로
+· 자연어:   "N7 노드에 N7GAE 공정 추가. 별칭 N7 GAE.
+             N7P 별칭에 7나노 플러스 추가해줘."'></textarea>
+      <div class="guide-in" style="margin-top:5px">
+        <div class="guide-h">가이드 <span class="dim">선택 — 해석 힌트(예: "전부 N7 노드 하위 공정임", "제품 코드만 있는 표임")</span></div>
+        <textarea id="mstGuide" placeholder="예: 아래는 전부 N7 노드의 공정 변이입니다"></textarea>
+      </div>
       <div class="seed-ctl">
         <button class="btn primary" id="btnMstPlan">계획 생성</button>
-        <span class="dim" id="mstSeedMsg">파싱 → 현재 마스터와 대조 → create/update/skip 계획을 보여줍니다. 적용은 선택 후.</span>
+        <span class="dim" id="mstSeedMsg">LLM 해석 → 현재 마스터와 대조 → create/update/skip/delete 계획. 적용은 선택 후.</span>
       </div>
       <div id="mstPlanPanel"></div>
     </div>
@@ -1328,7 +1322,7 @@ function runPreHtml(run){
 function runGateHtml(run){
   const m=(run.pre&&run.pre.master)||{},cands=m.unknown_candidates||[],conf=[];
   (m.docs||[]).forEach(d=>{
-    (d.conflicts||[]).forEach(c=>conf.push(`${c.type}: ${(c.ids||[]).join(" vs ")} (둘 다 언급 — 미확정)`));
+    (d.conflicts||[]).forEach(c=>conf.push(`${c.kind}: ${(c.ids||[]).join(" vs ")} (둘 다 언급 — 미확정)`));
     (d.guide_conflicts||[]).forEach(c=>conf.push(`${c.field}: 본문 ${c.body} vs 가이드 ${c.guide} (본문 우선)`));});
   let h=`<div class="rb-gate"><div class="rb-gate-h">⏸ 기준정보 검토 필요 — 좌표 확정 후 추출합니다</div>`;
   if(cands.length)h+=`<div class="rb-gate-row">미등록 후보 ${cands.length}: `
@@ -1647,51 +1641,66 @@ function renderIssueList(){
 // 자연어 CRUD는 **별도 독립 flow**로 붙는다(같은 저장 경로 MASTER_UPSERT를 재사용).
 const MST_LABEL={node:"node",process:"process",product:"product",project:"project"};
 async function loadMaster(force){
-  if(state.master&&!force)return state.master;
+  if(state.mgraph&&!force)return state.mgraph;
   const j=await api("api/master");
-  state.master=j.master||{nodes:[],processes:[],products:[],projects:[]};
+  state.mgraph=j.master||{entities:[],relations:[],kinds:["node","process","product","project"]};
   state.masterDeleted=j.deleted||[];
-  return state.master;
+  return state.mgraph;
 }
-function mstItems(typ){return (state.master||{})[{node:"nodes",process:"processes",product:"products",project:"projects"}[typ]]||[];}
-function mstFind(typ,id){return mstItems(typ).find(x=>String(x.id).toLowerCase()===String(id).toLowerCase());}
+// 그래프 헬퍼 — 저장은 entity{kind}+relation, node는 narrower_of 관계로 파생
+function mstKinds(){return (state.mgraph&&state.mgraph.kinds)||["node","process","product","project"];}
+function mstByKind(kind){return ((state.mgraph&&state.mgraph.entities)||[]).filter(e=>e.kind===kind);}
+function mstFind(id){return ((state.mgraph&&state.mgraph.entities)||[]).find(x=>String(x.id).toLowerCase()===String(id).toLowerCase());}
+function mstParent(id){const r=((state.mgraph&&state.mgraph.relations)||[])
+  .find(x=>x.rel==="narrower_of"&&String(x.from).toLowerCase()===String(id).toLowerCase());return r?r.to:null;}
 function aliasChips(it){
   const a=it.aliases||[];
   return a.length?`<span class="mst-al">${a.map(x=>`<span class="mst-chip">${esc(x)}</span>`).join("")}</span>`:'';
 }
+function mstRowHtml(e,sel,extra){
+  const on=sel===e.id?" mst-on":"";
+  return `<div class="mst-row${extra||''}${on}" data-mstsel="${escAttr(e.id)}">
+    <b>${esc(e.id)}</b>${aliasChips(e)}${e.label?`<span class="dim"> ${esc(e.label)}</span>`:''}</div>`;
+}
 function renderMaster(){
-  const m=state.master||{nodes:[],processes:[],products:[],projects:[]};
-  const byNode={};(m.processes||[]).forEach(p=>{(byNode[p.node]=byNode[p.node]||[]).push(p);});
+  const ents=(state.mgraph&&state.mgraph.entities)||[];
   const sel=state.mstSel||"";
-  const selCls=k=>sel===k?" mst-on":"";
+  const nodes=mstByKind("node"),procs=mstByKind("process");
+  const byNode={};procs.forEach(p=>{const n=mstParent(p.id)||"(미지정)";(byNode[n]=byNode[n]||[]).push(p);});
   let h=`<div class="mst-sec"><div class="mst-sec-h">node → process
-      <span class="dim">${(m.nodes||[]).length} node · ${(m.processes||[]).length} process</span>
+      <span class="dim">${nodes.length} node · ${procs.length} process</span>
       <button class="btn mini" data-mstnew="node">+ node</button></div>`;
-  if(!(m.nodes||[]).length)h+=`<div class="ent-empty">등록된 node 없음 — 시드를 붙여넣거나 + node</div>`;
-  (m.nodes||[]).forEach(n=>{
-    h+=`<div class="mst-row mst-node${selCls("node:"+n.id)}" data-mstsel="node:${escAttr(n.id)}">
-          <b>${esc(n.id)}</b>${aliasChips(n)}${n.label?`<span class="dim"> ${esc(n.label)}</span>`:''}</div>`;
-    (byNode[n.id]||[]).forEach(p=>{
-      h+=`<div class="mst-row mst-proc${selCls("process:"+p.id)}" data-mstsel="process:${escAttr(p.id)}">
-            <span class="dim">└</span> <b>${esc(p.id)}</b>${aliasChips(p)}${p.label?`<span class="dim"> ${esc(p.label)}</span>`:''}</div>`;
-    });
+  if(!nodes.length)h+=`<div class="ent-empty">등록된 node 없음 — 아래 자연어 CRUD로 붙여넣거나 + node</div>`;
+  nodes.forEach(n=>{
+    h+=mstRowHtml(n,sel," mst-node");
+    (byNode[n.id]||[]).forEach(p=>{h+=`<div class="mst-row mst-proc${sel===p.id?" mst-on":""}" data-mstsel="${escAttr(p.id)}">
+        <span class="dim">└</span> <b>${esc(p.id)}</b>${aliasChips(p)}${p.label?`<span class="dim"> ${esc(p.label)}</span>`:''}</div>`;});
     h+=`<div class="mst-sub"><button class="btn mini" data-mstnew="process" data-node="${escAttr(n.id)}">+ process (${esc(n.id)})</button></div>`;
   });
+  if((byNode["(미지정)"]||[]).length){   // 소속 node 없는 process(비정상) — 눈에 띄게
+    h+=`<div class="mst-sec-h" style="color:var(--warn)">⚠ 소속 node 미지정 process</div>`;
+    byNode["(미지정)"].forEach(p=>{h+=mstRowHtml(p,sel," mst-proc");});
+  }
   h+=`</div>`;
-  [["product","제품"],["project","과제"]].forEach(([typ,ko])=>{
-    const list=mstItems(typ);
-    h+=`<div class="mst-sec"><div class="mst-sec-h">${typ} <span class="dim">${ko} · ${list.length}</span>
-         <button class="btn mini" data-mstnew="${typ}">+ ${typ}</button></div>`;
+  [["product","제품"],["project","과제"]].forEach(([kind,ko])=>{
+    const list=mstByKind(kind);
+    h+=`<div class="mst-sec"><div class="mst-sec-h">${kind} <span class="dim">${ko} · ${list.length}</span>
+         <button class="btn mini" data-mstnew="${kind}">+ ${kind}</button></div>`;
     if(!list.length)h+=`<div class="ent-empty">없음</div>`;
-    list.forEach(x=>{h+=`<div class="mst-row${selCls(typ+":"+x.id)}" data-mstsel="${typ}:${escAttr(x.id)}">
-        <b>${esc(x.id)}</b>${aliasChips(x)}${x.label?`<span class="dim"> ${esc(x.label)}</span>`:''}</div>`;});
+    list.forEach(x=>{h+=mstRowHtml(x,sel);});
     h+=`</div>`;
+  });
+  // 씨앗 4종 외 확장 kind(있으면)
+  mstKinds().filter(k=>!["node","process","product","project"].includes(k)).forEach(kind=>{
+    const list=mstByKind(kind);if(!list.length)return;
+    h+=`<div class="mst-sec"><div class="mst-sec-h">${esc(kind)} <span class="dim">확장 · ${list.length}</span></div>`;
+    list.forEach(x=>{h+=mstRowHtml(x,sel);});h+=`</div>`;
   });
   if((state.masterDeleted||[]).length){
     h+=`<div class="mst-sec"><div class="mst-sec-h">🗑 삭제됨 <span class="dim">${state.masterDeleted.length}</span></div>`;
     state.masterDeleted.forEach(x=>{h+=`<div class="mst-row mst-del"><b>${esc(x.id)}</b>
-        <span class="dim">${esc(x.type||'')}</span>
-        <button class="btn mini" data-mstrestore="${escAttr((x.type||'')+':'+x.id)}">↩ 복원</button></div>`;});
+        <span class="dim">${esc(x.kind||'')}</span>
+        <button class="btn mini" data-mstrestore="${escAttr((x.kind||'')+':'+x.id)}">↩ 복원</button></div>`;});
     h+=`</div>`;
   }
   $("#mstTree").innerHTML=h;
@@ -1699,11 +1708,12 @@ function renderMaster(){
     '<div class="ent-empty">좌측에서 항목을 고르거나 + 버튼으로 새로 만드세요.</div>';
 }
 function mstFormHtml(ed){
-  const {typ,id,isNew}=ed, it=isNew?{}:(mstFind(typ,id)||{});
-  const nodes=mstItems("node");
+  const {typ,id,isNew}=ed, it=isNew?{}:(mstFind(id)||{});
+  const curNode=isNew?ed.node:mstParent(id);
+  const nodes=mstByKind("node");
   const nodeSel=typ==="process"
-    ? `<label class="edf"><span>소속 node <b class="req">*</b></span><select data-mf="node">`
-      +nodes.map(n=>`<option ${((it.node||ed.node)===n.id)?'selected':''}>${esc(n.id)}</option>`).join("")
+    ? `<label class="edf"><span>소속 node <b class="req">*</b> <span class="dim">(narrower_of 관계로 저장)</span></span><select data-mf="node">`
+      +nodes.map(n=>`<option ${(curNode===n.id)?'selected':''}>${esc(n.id)}</option>`).join("")
       +`</select></label>`:'';
   return `<div class="mst-form-h">${isNew?'새 항목':'편집'} <span class="ty-badge">${esc(typ)}</span>
       ${isNew?'':`<span class="tag">rev.${esc(it.revision||1)}</span>`}</div>
@@ -1719,7 +1729,7 @@ function mstFormHtml(ed){
       <button class="btn" data-mstcancel="1">취소</button>
       ${isNew?'':`<button class="btn danger" data-mstdel="${escAttr(typ+":"+id)}">🗑 삭제</button>`}
     </div>
-    <div class="edf-protected">id는 좌표의 정준키라 생성 후 바꿀 수 없습니다(바꾸려면 새로 만들고 기존 것을 삭제). 삭제는 참조 중이면 차단됩니다.</div>`;
+    <div class="edf-protected">id는 좌표의 정준키라 생성 후 바꿀 수 없습니다(바꾸려면 새로 만들고 기존 것을 삭제). 삭제는 참조/하위가 있으면 차단됩니다.</div>`;
 }
 function mstMsg(m,err){const el=$("#mstMsg");if(el)el.innerHTML=err?`<span class="err">${esc(m)}</span>`:esc(m);}
 async function mstSave(){
@@ -1732,17 +1742,17 @@ async function mstSave(){
   if(ed.typ==="process")item.node=(f.node||"").trim();
   try{
     await apiPost({step:"MASTER_UPSERT",input:{mtype:ed.typ,item}});
-    state.mstEdit=null;state.mstSel=ed.typ+":"+id;
+    state.mstEdit=null;state.mstSel=id;
     await loadMaster(true);renderMaster();mstMsg("저장했습니다: "+id);
   }catch(e){alert("저장 실패: "+(e.code?e.code+" ":"")+e.message);}
 }
 async function mstDelete(key){
   const [typ,id]=key.split(":");
-  let imp={refs:0,child_processes:[]};
+  let imp={refs:0,children:[]};
   try{imp=(await apiPost({step:"MASTER_IMPACT",input:{mtype:typ,id}})).result||imp;}catch(e){}
   const warn=[];
   if(imp.refs)warn.push("· 이 좌표를 쓰는 항목 "+imp.refs+"건");
-  if((imp.child_processes||[]).length)warn.push("· 하위 process "+imp.child_processes.length+"개: "+imp.child_processes.join(", "));
+  if((imp.children||[]).length)warn.push("· 하위 "+imp.children.length+"개: "+imp.children.join(", "));
   const blocked=warn.length>0;
   const msg="'"+id+"' ("+typ+")를 삭제합니다.\n"+(warn.join("\n")||"· 참조 없음")+
     (blocked?"\n\n⚠ 참조/하위가 있어 기본 삭제는 차단됩니다.\n확인을 누르면 강제 삭제(force)합니다 — 좌표가 끊어질 수 있습니다.":"")+"\n\n진행할까요?";
@@ -1758,21 +1768,22 @@ async function mstRestore(key){
     await loadMaster(true);renderMaster();mstMsg("복원했습니다: "+id);}
   catch(e){alert("복원 실패: "+(e.code?e.code+" ":"")+e.message);}
 }
-// ── 정형 시드 → 결정론 계획 → 선택 적용 (전통 CRUD와 같은 저장 경로) ──
+// ── 자연어 CRUD: 원문(아무 형식)+가이드 → LLM 해석 → 결정론 대조 계획 → 선택 적용 ──
+// 해석은 LLM, 대조·계획·적용은 결정론(전통 CRUD와 같은 저장 경로). 정형 파서 없음.
 async function mstPlan(){
-  const text=$("#mstSeedText").value;
-  if(!text.trim()){alert("시드 텍스트를 붙여넣으세요.");return;}
-  $("#mstPlanPanel").innerHTML='<div class="ent-empty">파싱 중…</div>';
+  const text=$("#mstSeedText").value, guide=$("#mstGuide").value;
+  if(!text.trim()){alert("원문(붙여넣기 또는 자연어 지시)을 입력하세요.");return;}
+  $("#mstPlanPanel").innerHTML='<div class="ent-empty">LLM이 해석하는 중… (사내 LLM 응답 시간만큼)</div>';
   try{
-    const r=(await apiPost({step:"MASTER_SEED_PLAN",input:{text}})).result;
+    const r=(await apiPost({step:"MASTER_SEED_PLAN",input:{text,guide:guide||undefined}})).result;
     state.mstPlan=r.plan||[];
-    let h=`<div class="plan-h">감지 형식 <b>${esc(r.format)}</b> · 항목 ${(r.items||[]).length} · 계획 ${state.mstPlan.length}</div>`;
-    if((r.errors||[]).length)h+=`<div class="plan-err">${r.errors.map(esc).join("<br>")}</div>`;
-    if(!state.mstPlan.length)h+=`<div class="ent-empty">적용할 계획 없음</div>`;
-    else{
+    const nUnres=(r.unresolved||[]).length;
+    let h=`<div class="plan-h">LLM 해석 → 항목 ${(r.items||[]).length} · 계획 ${state.mstPlan.length}${nUnres?` · 미해소 ${nUnres}`:''}</div>`;
+    if(!state.mstPlan.length&&!nUnres)h+=`<div class="ent-empty">뽑아낸 기준정보 없음</div>`;
+    if(state.mstPlan.length){
       h+=`<div class="plan-list">`+state.mstPlan.map((p,i)=>{
-        const cls=p.op==="create"?"op-c":p.op==="update"?"op-u":"op-s";
-        const sign=p.op==="create"?"+":p.op==="update"?"~":"=";
+        const cls=p.op==="create"?"op-c":p.op==="update"?"op-u":p.op==="delete"?"op-d":"op-s";
+        const sign=p.op==="create"?"+":p.op==="update"?"~":p.op==="delete"?"−":"=";
         let det="";
         if(p.op==="create")det=(p.node?`node=${esc(p.node)} `:'')+((p.aliases||[]).length?`별칭 ${p.aliases.map(esc).join(", ")}`:'');
         else if(p.op==="update"){const c=p.changes||{};const bits=[];
@@ -1780,17 +1791,23 @@ async function mstPlan(){
           if(c.label)bits.push(`label ${esc(c.label.from||'—')} → ${esc(c.label.to)}`);
           if(c.node)bits.push(`node ${esc(c.node.from||'—')} → ${esc(c.node.to)}`);
           det=bits.join(" · ");}
+        else if(p.op==="delete")det="삭제 요청";
         else det=esc(p.why||"변경 없음");
+        const dis=(p.op==="skip")?'disabled':'';
+        const chk=(p.op==="skip"||p.op==="delete")?'':'checked';   // 삭제는 기본 미선택(위험)
         return `<label class="plan-row ${cls}">
-          <input type="checkbox" data-planix="${i}" ${p.op==="skip"?'disabled':'checked'}>
+          <input type="checkbox" data-planix="${i}" ${dis} ${chk}>
           <span class="plan-sign">${sign}</span><span class="plan-op">${esc(p.op)}</span>
           <span class="ty-badge">${esc(p.type)}</span><b>${esc(p.id)}</b>
           <span class="plan-det">${det}</span>
+          ${p.confidence?`<span class="dim" style="font-size:9px">${esc(p.confidence)}</span>`:''}
           ${p.warn?`<span class="plan-warn">⚠ ${esc(p.warn)}</span>`:''}</label>`;
       }).join("")+`</div>
       <div class="seed-ctl"><button class="btn primary" id="btnMstApply">선택 적용</button>
-        <span class="dim">적용은 전통 CRUD와 동일한 저장 경로·검증을 지납니다.</span></div>`;
+        <span class="dim">적용은 전통 CRUD와 동일한 저장 경로·검증을 지납니다. 삭제는 기본 미선택.</span></div>`;
     }
+    if(nUnres)h+=`<div class="plan-err">미해소(사람 확인 필요):<br>`
+      +r.unresolved.map(u=>`· ${esc(u.text||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
     $("#mstPlanPanel").innerHTML=h;
   }catch(e){$("#mstPlanPanel").innerHTML=`<div class="plan-err">계획 생성 실패: ${esc((e.code?e.code+" ":"")+e.message)}</div>`;}
 }
@@ -1805,7 +1822,7 @@ async function mstApply(){
     let m="적용 "+r.n+"건";
     if((r.failed||[]).length)m+=" · 실패 "+r.failed.length+"건: "+r.failed.map(f=>f.id+"("+f.error+")").join(", ");
     mstMsg(m,(r.failed||[]).length>0);
-    $("#mstPlanPanel").innerHTML="";$("#mstSeedText").value="";
+    $("#mstPlanPanel").innerHTML="";$("#mstSeedText").value="";$("#mstGuide").value="";
   }catch(e){alert("적용 실패: "+(e.code?e.code+" ":"")+e.message);}
 }
 
@@ -2234,8 +2251,8 @@ document.addEventListener("click",e=>{
   const mrst=e.target.closest("[data-mstrestore]");
   if(mrst){mstRestore(mrst.dataset.mstrestore);return;}
   const msel=e.target.closest("[data-mstsel]");
-  if(msel){const [t,...rest]=msel.dataset.mstsel.split(":");const id=rest.join(":");
-    state.mstSel=msel.dataset.mstsel;state.mstEdit={typ:t,id,isNew:false};renderMaster();return;}
+  if(msel){const id=msel.dataset.mstsel;const ent=mstFind(id);
+    state.mstSel=id;state.mstEdit={typ:(ent&&ent.kind)||"node",id,isNew:false};renderMaster();return;}
   const radd=e.target.closest("[data-reladd]");
   if(radd){addRelation(radd.dataset.reladd);return;}
   const rrem=e.target.closest("[data-relremove]");

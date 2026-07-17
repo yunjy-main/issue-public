@@ -190,11 +190,10 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"stats": store.stats()})
                 elif path == "/api/vocabulary":
                     self._json({"vocabulary": store.load_vocab()})
-                elif path == "/api/master":   # 기준정보 — 사람이 만드는 좌표축
+                elif path == "/api/master":   # 기준정보 — 일반 entity{kind}+relation 그래프
                     full = store.get_master(include_deleted=True)
                     self._json({"master": store.get_master(),
-                                "deleted": [x for k in ("nodes", "processes", "products", "projects")
-                                            for x in full[k] if x.get("state") == "deleted"]})
+                                "deleted": [e for e in full["entities"] if e.get("state") == "deleted"]})
                 elif path == "/api/engines":
                     self._json(llm.describe_engines(store.load_vocab()))
                 elif path == "/api/history":

@@ -588,6 +588,12 @@ _PROVIDERS = {"http": _http_extract, "anthropic": _anthropic_extract, "cli": _cl
 # LLM 세트 스펙 — 각 판단을 전문 LLM 하나로 분해. 실제 시스템 프롬프트는 prompts/*.md.
 # stage(직렬 순서 A~E) + parallel(같은 stage 내 병렬 여부) 로 직·병렬 배치를 표현한다.
 _ENGINE_SPECS = [
+    {"id": "master_crud", "role": "MASTER_CRUD", "title": "기준정보 자연어 CRUD (원문+가이드 해석)",
+     "stage": "독립", "parallel": False, "prompt": "master_crud.md", "status": "active",
+     "context": ["현재 마스터 목록 (기존 참조는 이 id에서만)", "가이드 텍스트(해석 힌트)"],
+     "output": ("items[](type·id·node·aliases·evidence·confidence) + deletes[] + unresolved[]. "
+                "**해석만** — 대조·계획·적용은 결정론(seed_plan/store). 추출 파이프라인과 분리된 독립 flow."),
+     "schema": True},
     {"id": "attr", "role": "ATTR", "title": "정형 속성·카테고리 추출",
      "stage": "A", "parallel": True, "prompt": "attr.md", "status": "planned",
      "context": ["기준정보 어휘 (공정·제품 정규화 앵커)"],
@@ -737,6 +743,145 @@ def extract(text, vocab, source_id, ref_time=None, retrieved=None):
         result["fallback"] = {"from": mode, "code": e.code, "reason": str(e)}
         producer = dict(_STUB_PRODUCER); producer["fallback_from"] = mode
         return result, producer
+
+
+def _prompt_file(name):
+    """시스템 프롬프트는 **데이터 파일**(prompts/*.md)이다 — 코드에 하드코딩하지 않는다.
+    유저가 편집·교체할 수 있어야 하고, 프롬프트 탭이 실제 파일을 읽어 노출한다."""
+    try:
+        with open(os.path.join(ROOT, "prompts", name), encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        raise LLMError("E-2010", "프롬프트 파일 없음: prompts/%s" % name)
+
+
+def _lenient_json_obj(content):
+    """LLM 텍스트에서 JSON **객체 하나**를 관대하게 뽑는다 — 코드펜스·서두 설명을 흡수.
+    사내 LLM은 response_schema(구조화 출력 강제)를 못 쓰는 경우가 많아 자유형식 응답에 대비한다."""
+    if not isinstance(content, str):
+        return None
+    body = "\n".join(ln for ln in content.splitlines() if not ln.strip().startswith("```")).strip()
+    try:
+        o = json.loads(body)
+        return o if isinstance(o, dict) else None
+    except ValueError:
+        pass
+    i, j = body.find("{"), body.rfind("}")   # 서두 설명이 붙은 경우 첫 { ~ 마지막 }
+    if i >= 0 and j > i:
+        try:
+            o = json.loads(body[i:j + 1])
+            return o if isinstance(o, dict) else None
+        except ValueError:
+            return None
+    return None
+
+
+# ---------- 기준정보(마스터) CRUD — 원문+가이드 해석 (독립 flow, 추출과 분리) ----------
+_MASTER_CRUD_SCHEMA = {
+    "type": "object", "required": ["items"],
+    "properties": {
+        "items": {"type": "array", "items": {
+            "type": "object", "required": ["type", "id"],
+            "properties": {
+                "type": {"enum": ["node", "process", "product", "project"]},
+                "id": {"type": "string"}, "node": {"type": "string"}, "label": {"type": "string"},
+                "aliases": {"type": "array", "items": {"type": "string"}},
+                "evidence": {"type": "string"},
+                "confidence": {"enum": ["low", "medium", "high"]}}}},
+        "deletes": {"type": "array", "items": {
+            "type": "object", "required": ["type", "id"],
+            "properties": {"type": {"enum": ["node", "process", "product", "project"]},
+                           "id": {"type": "string"}, "evidence": {"type": "string"}}}},
+        "unresolved": {"type": "array", "items": {
+            "type": "object", "properties": {"text": {"type": "string"}, "why": {"type": "string"}}}},
+    }}
+
+
+def _master_context(master):
+    """현재 마스터를 프롬프트에 넣을 압축 목록으로. 기존 항목 참조는 이 id에서만(환각 차단)."""
+    lines = []
+    for typ, key in (("node", "nodes"), ("process", "processes"),
+                     ("product", "products"), ("project", "projects")):
+        for it in (master or {}).get(key, []) or []:
+            al = ", ".join(it.get("aliases") or [])
+            nd = " (node=%s)" % it["node"] if typ == "process" and it.get("node") else ""
+            lines.append("- %s: %s%s%s" % (typ, it.get("id"), nd, (" | 별칭: " + al) if al else ""))
+    return "\n".join(lines) if lines else "(등록된 기준정보 없음 — 전부 신규)"
+
+
+def master_crud_plan(text, guide=None, master=None, cfg=None):
+    """원문(아무 형식)+가이드 → 기준정보 항목 해석. **LLM이 해석만** 하고, 기존 마스터와의 대조·
+    계획·적용은 결정론(master.seed_plan/store)이 한다. 반환 {items, deletes, unresolved}.
+    추출 파이프라인과 **완전히 분리된 독립 flow** (프롬프트·스텝·저장 경로 공유 안 함)."""
+    cfg = cfg or load_llm_config()
+    mode = cfg.get("mode", "stub")
+    if mode != "http":
+        raise LLMError("E-2009", "기준정보 자연어 CRUD는 mode:http에서만 동작합니다 (현재 mode=%s)" % mode)
+    system = _prompt_file("master_crud.md") + "\n\n[현재 마스터]\n" + _master_context(master)
+    user = ("[가이드]\n" + ((guide or "").strip() or "없음")
+            + "\n\n[원문]\n" + (text or ""))
+    payload = {"model": cfg.get("model", "internal"),
+               "messages": [{"role": "system", "content": system},
+                            {"role": "user", "content": user}]}
+    if cfg.get("response_schema"):
+        payload["response_format"] = {"type": "json_schema",
+                                      "json_schema": {"name": "master_crud", "schema": _MASTER_CRUD_SCHEMA}}
+    payload.update(cfg.get("extra_payload", {}))
+    headers = {"Content-Type": "application/json", **cfg.get("headers", {})}
+    data = json.dumps(payload).encode("utf-8")
+    url, timeout = cfg.get("url"), cfg.get("timeout", 60)
+    if not url:
+        raise LLMError("E-2004", "llm.json에 url 미설정")
+    import urllib.request
+    import urllib.error
+    _log_llm_request("MASTER_CRUD", url, headers, data, cfg)
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers),
+                                    timeout=timeout) as r:
+            raw = r.read().decode("utf-8")
+            _log_llm_response("MASTER_CRUD", getattr(r, "status", "?"), time.time() - t0, raw, cfg)
+            resp = json.loads(raw)
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", "replace")
+        except Exception:  # noqa
+            pass
+        _log_llm_error("MASTER_CRUD", url, time.time() - t0, e, "HTTP %s · %s" % (e.code, body[:500]))
+        raise LLMError("E-2001", "LLM HTTP %s: %s" % (e.code, body[:220]))
+    except Exception as e:  # noqa
+        _log_llm_error("MASTER_CRUD", url, time.time() - t0, e, "timeout=%ss" % timeout)
+        raise LLMError("E-2001", "LLM 호출 실패(%s, %.1fs, %s): %s"
+                       % (type(e).__name__, time.time() - t0, url, e))
+    try:
+        content = resp["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise LLMError("E-2002", "LLM 응답 형식 예상 밖")
+    obj = _lenient_json_obj(content)   # 코드펜스·서두 잡음 흡수 (자유형식 LLM 대비)
+    if obj is None:
+        raise LLMError("E-2002", "LLM 응답에서 JSON을 찾지 못함")
+    out = {"items": [], "deletes": [], "unresolved": []}
+    for it in (obj.get("items") or []):
+        if not isinstance(it, dict) or it.get("type") not in ("node", "process", "product", "project"):
+            continue
+        mid = str(it.get("id") or "").strip()
+        if not mid:
+            continue
+        out["items"].append({
+            "type": it["type"], "id": mid,
+            "node": (str(it["node"]).strip() if it.get("node") else None),
+            "label": (str(it["label"]).strip() if it.get("label") else None),
+            "aliases": [str(a).strip() for a in (it.get("aliases") or []) if str(a).strip()],
+            "evidence": it.get("evidence"), "confidence": it.get("confidence")})
+    for d in (obj.get("deletes") or []):
+        if isinstance(d, dict) and d.get("type") in ("node", "process", "product", "project") and d.get("id"):
+            out["deletes"].append({"type": d["type"], "id": str(d["id"]).strip(),
+                                   "evidence": d.get("evidence")})
+    for u in (obj.get("unresolved") or []):
+        if isinstance(u, dict):
+            out["unresolved"].append({"text": u.get("text"), "why": u.get("why")})
+    return out
 
 
 # ---------- 자연어 작업 명령 감지 (전용 focused 경로 — 약한 LLM에도 견고) ----------

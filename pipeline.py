@@ -27,8 +27,11 @@ _MASTER_ERR = {
     "E-4303": "process는 소속 node가 필요합니다",
     "E-4304": "소속 node가 마스터에 없습니다 (node를 먼저 등록)",
     "E-4305": "대상 없음/이미 삭제됨",
-    "E-4306": "하위 process가 있어 삭제할 수 없습니다 (하위를 먼저 정리)",
+    "E-4306": "하위 항목(narrower_of)이 있어 삭제할 수 없습니다 (하위를 먼저 정리)",
     "E-4307": "이 좌표를 쓰는 항목이 있어 삭제할 수 없습니다 (재지정 후 삭제)",
+    "E-4308": "관계 양끝이 모두 active 기준정보여야 합니다",
+    "E-4309": "관계 규칙의 kind와 맞지 않습니다",
+    "E-4310": "같은 id가 이미 다른 kind로 존재합니다",
 }
 
 
@@ -611,10 +614,10 @@ def handle_step(body):
 
     # ---------- 기준정보(마스터) — 사람이 만드는 좌표축 ----------
     if step == "MASTER_GET":
+        full = store.get_master(include_deleted=True)
         return ok({"master": store.get_master(),
-                   "deleted": [x for k in ("nodes", "processes", "products", "projects")
-                               for x in store.get_master(include_deleted=True)[k]
-                               if x.get("state") == "deleted"]}, ["MASTER_UPSERT", "STOP"])
+                   "deleted": [e for e in full["entities"] if e.get("state") == "deleted"]},
+                  ["MASTER_UPSERT", "STOP"])
 
     if step == "MASTER_UPSERT":   # 전통 CRUD (생성·수정) — 자연어 경로도 결국 여기로
         typ = inp.get("mtype")
@@ -641,13 +644,39 @@ def handle_step(body):
     if step == "MASTER_IMPACT":   # 삭제 전 영향도 미리보기
         return ok(store.master_impact(inp.get("mtype"), inp.get("id")), ["MASTER_DELETE", "STOP"])
 
-    if step == "MASTER_SEED_PLAN":   # 시드(JSON/YAML/TSV) → 결정론 파싱 + 병합계획 (적용 안 함)
+    if step == "MASTER_SEED_PLAN":   # 원문(아무 형식)+가이드 → LLM 해석 → 결정론 대조 → 계획(적용 안 함)
+        # 현실의 시드는 정형이 아니다(엑셀 붙여넣기·메일·자유문장). 정형으로 만드는 공수가 더 크므로
+        # **해석은 LLM**이 하고, 기존 마스터와의 **대조·계획·적용은 결정론**(seed_plan/store)이 한다.
         import master as master_mod
-        parsed = master_mod.parse_seed(inp.get("text") or "")
+        text = inp.get("text") or ""
+        if not text.strip():
+            raise StepError("E-1001", "원문이 비었습니다", 400)
         cur = store.get_master()
-        plan = master_mod.seed_plan(cur, parsed["items"])
-        return ok({"format": parsed["format"], "errors": parsed["errors"],
-                   "items": parsed["items"], "plan": plan}, ["MASTER_SEED_APPLY", "STOP"])
+        try:
+            res = llm.master_crud_plan(text, inp.get("guide"), cur)
+        except llm.LLMError as e:
+            raise StepError(e.code, str(e), 502)
+        plan = master_mod.seed_plan(cur, res["items"])   # 결정론 대조: create/update/skip
+        for d in res.get("deletes") or []:               # 삭제는 별도 계획 행 + 영향도 미리보기
+            row = {"op": "delete", "type": d["type"], "id": d["id"], "evidence": d.get("evidence")}
+            imp = store.master_impact(d["type"], d["id"])
+            if not store.master_find(store.get_master(include_deleted=True), d["id"], d["type"]):
+                row["warn"] = "마스터에 없는 항목 — 삭제 대상 아님"
+            elif imp["refs"] or imp["children"]:
+                row["warn"] = "참조 %d건%s — 강제 삭제만 가능" % (
+                    imp["refs"], (" · 하위 %d" % len(imp["children"])) if imp["children"] else "")
+            plan.append(row)
+        by = {}
+        for it in res["items"]:
+            by[(it["type"], it["id"])] = it
+        for p in plan:   # 계획 행에 근거·확신도를 실어 사람이 판단할 수 있게
+            src = by.get((p.get("type"), p.get("id")))
+            if src:
+                p["evidence"] = src.get("evidence")
+                p["confidence"] = src.get("confidence")
+        return ok({"format": "llm", "errors": [], "items": res["items"],
+                   "unresolved": res.get("unresolved") or [], "plan": plan},
+                  ["MASTER_SEED_APPLY", "STOP"])
 
     if step == "MASTER_SEED_APPLY":   # 사람이 고른 계획만 적용 → 전통 CRUD와 동일 저장 경로
         actor = inp.get("actor", "human")
@@ -657,6 +686,12 @@ def handle_step(body):
             if op == "skip":
                 continue
             typ = row.get("type")
+            if op == "delete":   # 삭제 가드(참조·하위)는 store가 유지 — force는 사람이 명시할 때만
+                r, err = store.master_delete(typ, row.get("id"), actor, bool(row.get("force")))
+                (failed if err else applied).append(
+                    {"type": typ, "id": row.get("id"), "op": op, "error": err} if err
+                    else {"type": typ, "id": row.get("id"), "op": op})
+                continue
             item = {"id": row.get("id")}
             if op == "create":
                 for k in ("node", "label"):

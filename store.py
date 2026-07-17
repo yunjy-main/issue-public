@@ -884,13 +884,17 @@ def redirect_relations(absorbed_ids, survivor_id, actor="human"):
         return n
 
 
-# ---------- 기준정보(마스터) — 사람이 만드는 좌표축 (node→process, product, project) ----------
-# **전통 CRUD와 자연어 CRUD가 공유하는 유일한 저장 경로**. 자연어는 입력 방식일 뿐이고
-# 검증·저장·이력은 전부 여기를 지난다(두 경로가 갈라지면 버그가 난다).
-# projection은 단일 파일(master.json/.yaml) — 항목이 수백 규모라 파일당 1개는 과하고,
-# id에 슬래시 등 파일명 불가 문자가 올 수 있어 안전하다. 이력은 이벤트 로그가 정본.
-_MASTER_TYPES = ("node", "process", "product", "project")
-_MKEY = {"node": "nodes", "process": "processes", "product": "products", "project": "projects"}
+# ---------- 기준정보(마스터) — 일반 entity{kind}+relation 그래프 (이슈 그래프와 격리된 별도 인스턴스) ----------
+# kind는 개방형 좌표축(node/process/product/project + 확장), 계층·관계는 relation으로 '주입'하고
+# cardinality/승격은 MASTER_REL_RULES(데이터)로 정한다 → 결정론(process→node 1:N·자동승격)을
+# 지키면서 나중에 N:M·새 kind를 스키마 변경/마이그레이션 없이 확장한다. 인터페이스는 {kind,id,node,
+# aliases,label}로 유지하되(파이프라인·UI 충격 최소), `node`는 내부적으로 narrower_of 관계로 저장한다.
+# 전통 CRUD·자연어 CRUD가 공유하는 유일한 저장 경로. projection=단일 master.json/.yaml, 이력=이벤트 정본.
+MASTER_KINDS = ("node", "process", "product", "project")   # 씨앗 kind(확장 가능) — UI 렌더 순서
+MASTER_REL_RULES = {
+    # rel: 자식(from) → 부모(to). max_per_from=1 → 트리(결정론 유지). promote=True → 좌표 승격.
+    "narrower_of": {"from_kind": "process", "to_kind": "node", "max_per_from": 1, "promote": True},
+}
 _MREF_FIELD = {"node": "node", "process": "process", "product": "product", "project": "project"}
 
 
@@ -913,53 +917,124 @@ def _dedup_aliases(aliases):
     return out
 
 
-def get_master(include_deleted=False):
-    """마스터 projection. 없으면 빈 마스터(첫 실행)."""
-    with _LOCK:
-        m = _read_json(_master_path() + ".json") or {}
-        out = {}
-        for k in ("nodes", "processes", "products", "projects"):
-            lst = m.get(k) or []
-            out[k] = lst if include_deleted else [x for x in lst if x.get("state", "active") == "active"]
-        return out
+def _load_mgraph():
+    g = _read_json(_master_path() + ".json") or {}
+    return {"entities": g.get("entities") or [], "relations": g.get("relations") or []}
 
 
-def master_find(m, typ, mid):
-    for it in (m.get(_MKEY[typ]) or []):
-        if str(it.get("id", "")).lower() == str(mid).lower():
-            return it
+def _mfind(g, mid, kind=None):
+    for e in g["entities"]:
+        if str(e.get("id", "")).lower() == str(mid).lower() and (kind is None or e.get("kind") == kind):
+            return e
     return None
 
 
-def master_refs(typ, mid):
-    """이 마스터 항목을 좌표로 쓰는 active 엔티티 수 — 삭제 영향도(좌표 파괴 방지)."""
-    f = _MREF_FIELD[typ]
+def _mactive(g, mid, kind=None):
+    e = _mfind(g, mid, kind)
+    return e if e and e.get("state", "active") == "active" else None
+
+
+def _mparent(g, mid, rel="narrower_of"):
+    """active narrower_of 관계에서 부모(to) id. max_per_from=1이라 최대 1개."""
+    for r in g["relations"]:
+        if (r.get("state", "active") == "active" and r.get("rel") == rel
+                and str(r.get("from", "")).lower() == str(mid).lower()):
+            return r.get("to")
+    return None
+
+
+def _mchildren(g, mid, rel="narrower_of"):
+    return [r.get("from") for r in g["relations"]
+            if r.get("state", "active") == "active" and r.get("rel") == rel
+            and str(r.get("to", "")).lower() == str(mid).lower()]
+
+
+def _mwrite(g):
+    _write_json_yaml(_master_path(), {"entities": g["entities"], "relations": g["relations"]})
+
+
+def get_master(include_deleted=False):
+    """마스터 그래프 {entities, relations, kinds, rules}. 기본은 active만. 첫 실행이면 빈 그래프."""
+    with _LOCK:
+        g = _load_mgraph()
+        if include_deleted:
+            ents, rels = g["entities"], g["relations"]
+        else:
+            ents = [e for e in g["entities"] if e.get("state", "active") == "active"]
+            rels = [r for r in g["relations"] if r.get("state", "active") == "active"]
+        return {"entities": ents, "relations": rels,
+                "kinds": list(MASTER_KINDS), "rules": MASTER_REL_RULES}
+
+
+def master_find(g, mid, kind=None):
+    """그래프 g에서 id로 entity 조회(옵션 kind 일치). g는 get_master() 결과."""
+    for e in g.get("entities", []):
+        if str(e.get("id", "")).lower() == str(mid).lower() and (kind is None or e.get("kind") == kind):
+            return e
+    return None
+
+
+def master_parent(g, mid):
+    """편의: 그래프 g에서 mid의 부모 좌표 id(process→node). 없으면 None."""
+    for r in g.get("relations", []):
+        if r.get("rel") == "narrower_of" and str(r.get("from", "")).lower() == str(mid).lower():
+            return r.get("to")
+    return None
+
+
+def master_refs(kind, mid):
+    """이 좌표를 쓰는 active 이슈/사건 수 — 삭제 영향도. 알려진 kind만 이슈 필드가 있다(확장 kind는 0)."""
+    f = _MREF_FIELD.get(kind)
+    if not f:
+        return 0
     return sum(1 for e in list_entities() if str(e.get(f) or "").lower() == str(mid).lower())
 
 
-def master_upsert(typ, item, actor="human"):
-    """마스터 항목 생성/수정. 반환 (row, None) | (None, error_code).
-    aliases는 전체교체(폼) 또는 aliases_add/aliases_remove(계획) 둘 다 받는다."""
-    if typ not in _MASTER_TYPES:
-        return None, "E-4301"
+def _set_parent(g, pid, node_id, actor):
+    """process pid의 narrower_of 부모를 node_id로 설정(교체). g를 제자리 수정, 이벤트 append.
+    max_per_from=1(트리)이라 기존 narrower_of는 소프트삭제하고 새로 만든다. 반환 error_code|None."""
+    node_id = str(node_id).strip()
+    nd = _mactive(g, node_id, "node")
+    if not nd:
+        return "E-4304"   # 소속 node가 마스터에 없음
+    cur_to = _mparent(g, pid)
+    if cur_to and cur_to.lower() == node_id.lower():
+        return None   # 이미 그 부모
+    for r in g["relations"]:   # 기존 narrower_of 소프트삭제(교체)
+        if (r.get("state", "active") == "active" and r.get("rel") == "narrower_of"
+                and str(r.get("from", "")).lower() == str(pid).lower()):
+            r["state"] = "deleted"; r["revision"] = r.get("revision", 1) + 1; r["updated_at"] = now_iso()
+    rid = next_id("MREL")
+    row = {"id": rid, "from": pid, "rel": "narrower_of", "to": node_id,
+           "state": "active", "revision": 1, "updated_at": now_iso()}
+    g["relations"].append(row)
+    append_event({"event": "master.rel_add", "id": rid, "from": pid, "rel": "narrower_of",
+                  "to": node_id, "actor": actor})
+    return None
+
+
+def master_upsert(kind, item, actor="human"):
+    """기준정보 항목 생성/수정. entity{kind}로 저장하고, process의 `node`는 narrower_of 관계로.
+    aliases는 전체교체(폼) 또는 aliases_add/aliases_remove(계획) 지원. 반환 (row, None)|(None, code).
+    row에는 UI 편의로 process면 `node`(부모)도 실어 돌려준다."""
+    if kind not in MASTER_KINDS:
+        return None, "E-4301"   # 씨앗 kind만(확장은 MASTER_KINDS에 추가 — 스키마 변경 없음)
     mid = str(item.get("id") or "").strip()
     if not mid:
         return None, "E-4302"
     with _LOCK:
-        m = get_master(include_deleted=True)
-        cur = master_find(m, typ, mid)
-        if typ == "process":   # process는 소속 node가 반드시 있고, 그 node가 마스터에 있어야 한다
-            node = item.get("node") or (cur or {}).get("node")
-            if not node:
-                return None, "E-4303"
-            nd = master_find(m, "node", node)
-            if not nd or nd.get("state", "active") != "active":
-                return None, "E-4304"
+        g = _load_mgraph()
+        cur = _mfind(g, mid)
+        if cur and cur.get("kind") and cur.get("kind") != kind:
+            return None, "E-4310"   # 같은 id가 다른 kind로 이미 존재
+        node = item.get("node") or (master_parent(get_master(), mid) if cur else None)
+        if kind == "process" and not node:
+            return None, "E-4303"   # process는 소속 node 필수
         row = dict(cur or {})
-        row.update({"id": mid, "type": typ})
-        for k in ("node", "label"):
-            if item.get(k) is not None:
-                row[k] = item[k]
+        row.update({"id": mid, "kind": kind})
+        row.pop("type", None); row.pop("node", None)   # 레거시/파생 필드 저장 안 함
+        if item.get("label") is not None:
+            row["label"] = item["label"]
         if item.get("aliases") is not None:
             row["aliases"] = _dedup_aliases(item["aliases"])
         if item.get("aliases_add"):
@@ -971,69 +1046,67 @@ def master_upsert(typ, item, actor="human"):
         row["state"] = "active"
         row["revision"] = (cur.get("revision", 0) + 1) if cur else 1
         row["updated_at"] = now_iso()
-        lst = m[_MKEY[typ]]
         if cur is None:
-            lst.append(row)
+            g["entities"].append(row)
         else:
-            for i, x in enumerate(lst):
+            for i, x in enumerate(g["entities"]):
                 if str(x.get("id", "")).lower() == mid.lower():
-                    lst[i] = row
+                    g["entities"][i] = row
                     break
-        append_event({"event": "master.upsert", "id": mid, "mtype": typ,
+        if kind == "process" and item.get("node"):   # 소속 node 관계 설정/교체
+            err = _set_parent(g, mid, item["node"], actor)
+            if err:
+                return None, err
+        append_event({"event": "master.upsert", "id": mid, "kind": kind,
                       "revision": row["revision"], "actor": actor, "data": row})
-        _write_json_yaml(_master_path(), m)
-        return row, None
+        _mwrite(g)
+        out = dict(row)
+        if kind == "process":
+            out["node"] = _mparent(g, mid)   # UI 편의: 부모 node 함께
+        return out, None
 
 
-def master_delete(typ, mid, actor="human", force=False):
-    """소프트 삭제(state=deleted). **참조 중이거나 하위 process가 있으면 차단** — 좌표 파괴 방지.
-    force로만 강행(사람이 영향을 보고 결정). 반환 (row, None) | (None, code)."""
-    if typ not in _MASTER_TYPES:
-        return None, "E-4301"
+def master_delete(kind, mid, actor="human", force=False):
+    """소프트 삭제(state=deleted) + 관련 관계 소프트삭제. **하위 자식(narrower_of)·참조 이슈가 있으면
+    차단**(좌표 파괴 방지) — force로만 강행. 반환 (row, None)|(None, code)."""
     with _LOCK:
-        m = get_master(include_deleted=True)
-        cur = master_find(m, typ, mid)
-        if not cur or cur.get("state", "active") != "active":
+        g = _load_mgraph()
+        cur = _mactive(g, mid, kind)
+        if not cur:
             return None, "E-4305"
-        if typ == "node":
-            kids = [p for p in (m.get("processes") or [])
-                    if p.get("state", "active") == "active"
-                    and str(p.get("node", "")).lower() == str(mid).lower()]
-            if kids and not force:
-                return None, "E-4306"
-        if master_refs(typ, mid) and not force:
+        kids = _mchildren(g, mid)   # 이 좌표를 부모로 삼는 자식(예: node 밑 process)
+        if kids and not force:
+            return None, "E-4306"
+        if master_refs(kind, mid) and not force:
             return None, "E-4307"
-        cur["state"] = "deleted"
-        cur["revision"] = cur.get("revision", 1) + 1
-        cur["updated_at"] = now_iso()
-        append_event({"event": "master.delete", "id": mid, "mtype": typ, "actor": actor, "data": cur})
-        _write_json_yaml(_master_path(), m)
+        cur["state"] = "deleted"; cur["revision"] = cur.get("revision", 1) + 1; cur["updated_at"] = now_iso()
+        for r in g["relations"]:   # 이 노드에 걸린 관계도 소프트삭제
+            if (r.get("state", "active") == "active"
+                    and (str(r.get("from", "")).lower() == str(mid).lower()
+                         or str(r.get("to", "")).lower() == str(mid).lower())):
+                r["state"] = "deleted"; r["revision"] = r.get("revision", 1) + 1; r["updated_at"] = now_iso()
+        append_event({"event": "master.delete", "id": mid, "kind": kind, "actor": actor, "data": cur})
+        _mwrite(g)
         return cur, None
 
 
-def master_restore(typ, mid, actor="human"):
+def master_restore(kind, mid, actor="human"):
     with _LOCK:
-        m = get_master(include_deleted=True)
-        cur = master_find(m, typ, mid)
+        g = _load_mgraph()
+        cur = _mfind(g, mid, kind)
         if not cur or cur.get("state") != "deleted":
             return None, "E-4305"
-        cur["state"] = "active"
-        cur["revision"] = cur.get("revision", 1) + 1
-        cur["updated_at"] = now_iso()
-        append_event({"event": "master.restore", "id": mid, "mtype": typ, "actor": actor, "data": cur})
-        _write_json_yaml(_master_path(), m)
+        cur["state"] = "active"; cur["revision"] = cur.get("revision", 1) + 1; cur["updated_at"] = now_iso()
+        append_event({"event": "master.restore", "id": mid, "kind": kind, "actor": actor, "data": cur})
+        _mwrite(g)
         return cur, None
 
 
-def master_impact(typ, mid):
-    """삭제 전 영향도 미리보기 — 참조 엔티티 수 + (node면) 하위 process 목록."""
-    m = get_master(include_deleted=True)
-    kids = []
-    if typ == "node":
-        kids = [p["id"] for p in (m.get("processes") or [])
-                if p.get("state", "active") == "active"
-                and str(p.get("node", "")).lower() == str(mid).lower()]
-    return {"refs": master_refs(typ, mid), "child_processes": kids}
+def master_impact(kind, mid):
+    """삭제 전 영향도 — 참조 이슈 수 + 하위 자식(narrower_of) 목록."""
+    with _LOCK:
+        g = _load_mgraph()
+        return {"refs": master_refs(kind, mid), "children": _mchildren(g, mid)}
 
 
 # ---------- STRUCTURE 산출물(구조화 문서) ----------
