@@ -218,9 +218,10 @@ def handle_step(body):
             raise StepError("E-1001", "빈 입력", 400)
         run_id = store.next_id("RUN")
         src = store.capture_source(text, inp.get("channel"),
-                                   first_captured_at=inp.get("first_captured_at"))
+                                   first_captured_at=inp.get("first_captured_at"),
+                                   guide=inp.get("guide"))   # 가이드는 본문과 분리 보관(해석 힌트)
         return ok({"source_id": src["id"], "source": src},
-                  ["EXTRACT", "STOP"], {"run_id": run_id, "result_id": src["id"]})
+                  ["STRUCTURE", "EXTRACT", "STOP"], {"run_id": run_id, "result_id": src["id"]})
 
     if step in ("EXTRACT", "EXTRACT_RETRY"):
         step = "EXTRACT"
@@ -689,7 +690,10 @@ def handle_step(body):
                 raise StepError("E-1003", "source_id(STRUCTURE 완료) 또는 text 필요", 422)
             docs = [{"doc_id": "adhoc", "body_clean": txt}]
         cur = store.get_master()
+        # 가이드는 인자로 받거나, 없으면 CAPTURE 때 저장한 원문의 가이드를 쓴다(재실행에도 동일 조건)
         guide = (inp.get("guide") or "").strip()
+        if not guide and sid:
+            guide = ((store.get_source(sid) or {}).get("guide") or "").strip()
         out, cands = [], []
         for d in docs:
             body = d.get("body_clean") or ""

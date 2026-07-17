@@ -266,6 +266,25 @@
   .rel-grid .r-occ,.rel-grid .r-cap{font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
   .rel-grid .r-mk{display:inline-block;width:9px;text-align:center}
   .rel-grid .mk-approx{color:var(--warn)}.rel-grid .mk-unc{color:var(--bad);font-weight:700}
+  /* ---- 가이드 입력(본문과 UI상 분리, 전송 시 함께) ---- */
+  .guide-in{margin-top:5px;padding:5px 6px;border:1px dashed var(--border);border-radius:5px;background:var(--chip)}
+  .guide-h{font-size:9.5px;font-weight:700;color:var(--muted);margin-bottom:3px}
+  .guide-h .dim{font-weight:400}
+  #runGuide{width:100%;min-height:30px;font-size:11.5px;padding:3px 5px;border:1px solid var(--border);
+    border-radius:4px;background:var(--bg);color:var(--fg);font-family:inherit;resize:vertical}
+  /* ---- run-box 전처리·기준정보 게이트 ---- */
+  .rb-pre{border:1px solid var(--border);border-radius:5px;padding:5px 7px;margin-bottom:5px;background:var(--bg)}
+  .rb-pre-h{font-size:10px;font-weight:700;color:var(--muted);margin-bottom:3px}
+  .rb-pre-stat{font-family:var(--mono);font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .rb-coord{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0}
+  .rb-cd{background:var(--chip);border-radius:8px;padding:0 6px;font-size:10px;font-family:var(--mono)}
+  .rb-cd b{color:var(--accent)}
+  .rb-cd.none{opacity:.5}
+  .rb-gate{border:1px solid var(--warn);border-radius:5px;padding:5px 7px;margin-bottom:5px;background:var(--bg)}
+  .rb-gate-h{font-size:10.5px;font-weight:700;color:var(--warn);margin-bottom:3px}
+  .rb-gate-row{font-size:10.5px;margin:2px 0}
+  .rb-gate-row .mst-chip{background:var(--chip)}
+  .rb-gate-acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
   /* ---- 기준정보(마스터) 탭 ---- */
   .mst-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 0 8px;border-bottom:1px solid var(--border);margin-bottom:8px}
   .mst-bar b{font-size:12px}
@@ -477,6 +496,7 @@
   .rb-status.done{border:1px solid var(--accent);color:var(--accent)}
   .rb-status.committed{background:var(--ok);color:#fff}
   .rb-status.error{background:var(--bad);color:#fff}
+  .rb-status.gate{border:1px solid var(--warn);color:var(--warn)}
   /* 단계·시간 스트립 (박스 위, 실시간·작게) */
   .rb-stages{display:flex;align-items:center;gap:3px;flex-wrap:wrap;padding:3px 8px;
     border-bottom:1px solid var(--border);background:var(--bg);font-size:9.5px;color:var(--muted)}
@@ -581,6 +601,10 @@
     <div class="run-pane">
       <div class="run-in">
         <textarea id="runText" placeholder="메일·메신저·회의록 등 원문을 그대로 붙여넣으세요. 채널이 여럿이어도 한 곳에 몰아넣습니다. (capture-first: 저장은 무조건, 추출·검토는 이 화면에서)"></textarea>
+        <div class="guide-in">
+          <div class="guide-h">가이드 <span class="dim">선택 — 이 본문이 어느 공정·제품·과제 건인지. 본문이 모호할 때만 좌표를 채웁니다(본문이 명시하면 본문이 이기고, 충돌하면 알려줍니다).</span></div>
+          <textarea id="runGuide" placeholder="예: N7P GPIO-A 알파과제 건입니다"></textarea>
+        </div>
         <div class="run-ctl">
           <button class="btn primary" id="btnExtract">추출 (전송)</button>
           <span class="runmsg" id="runMsg"></span>
@@ -992,33 +1016,78 @@ function defaultRv(e){return e&&e.merge_into?{review:"merge",merge_into:e.merge_
 function snippet(t){t=String(t).replace(/\s+/g," ").trim();return t.length>52?t.slice(0,52)+"…":t;}
 function saveRuns(){try{localStorage.setItem(LS_RUNS,JSON.stringify((state.runs||[]).map(r=>({
   runId:r.runId,sourceId:r.sourceId,snippet:r.snippet,status:r.status,
-  reviews:r.reviews,committed:r.committed,commitMsg:r.commitMsg,startedAt:r.startedAt}))));}catch(e){}}
+  reviews:r.reviews,committed:r.committed,commitMsg:r.commitMsg,startedAt:r.startedAt,
+  guide:r.guide,phase:r.phase,pre:r.pre}))));}catch(e){}}   // 게이트 대기 run 복원용(guide·pre)
 function loadRunsLS(){try{return JSON.parse(localStorage.getItem(LS_RUNS)||"[]")||[];}catch(e){return[];}}
 
 // 전송: CAPTURE → 히스토리 박스 즉시 생성 → 입력 set 초기화 → EXTRACT 비동기 발사·독립 폴링
 async function doSubmit(){
   const text=$("#runText").value.trim();
   if(!text){setRunMsg("입력이 비어 있습니다",true);return;}
-  const run=await submitText(text);
-  if(run){$("#runText").value="";try{$("#runText").focus();}catch(e){}}   // 성공 시에만 입력 초기화
+  const guide=$("#runGuide").value.trim();
+  const run=await submitText(text,guide);
+  if(run){$("#runText").value="";$("#runGuide").value="";try{$("#runText").focus();}catch(e){}}   // 성공 시에만 초기화
 }
-// 주어진 텍스트를 전송(CAPTURE→히스토리 박스→EXTRACT 폴링). doSubmit·재추출 공용. 반환 run|null.
-async function submitText(text,firstCapturedAt){
+// 주어진 텍스트를 전송. CAPTURE(+가이드) → 전처리·기준정보 게이트 → EXTRACT 폴링. 반환 run|null.
+async function submitText(text,guide,firstCapturedAt){
   text=(text||"").trim();if(!text)return null;
   $("#btnExtract").disabled=true;setRunMsg("전송 중…");
-  let cap;const capInput={text};if(firstCapturedAt)capInput.first_captured_at=firstCapturedAt;
+  let cap;const capInput={text};
+  if(guide)capInput.guide=guide;
+  if(firstCapturedAt)capInput.first_captured_at=firstCapturedAt;
   try{cap=await apiPost({step:"CAPTURE",input:capInput});}
   catch(e){setRunMsg((e.code?e.code+" ":"")+e.message,true);$("#btnExtract").disabled=false;return null;}
-  const run={runId:cap.run_id,sourceId:cap.result.source_id,snippet:snippet(text),
-    status:"running",proposal:null,reviews:{},committed:false,error:null,
+  const run={runId:cap.run_id,sourceId:cap.result.source_id,snippet:snippet(text),guide:guide||null,
+    status:"running",phase:"structure",pre:null,proposal:null,reviews:{},committed:false,error:null,
     startedAt:(cap.result.source&&cap.result.source.captured_at)||null,_t0:Date.now()};
   (state.runs=state.runs||[]).unshift(run);renderHistory();saveRuns();
-  $("#btnExtract").disabled=false;setRunMsg(run.runId+" 전송됨 · 처리 시작 (계속 입력 가능)");
+  $("#btnExtract").disabled=false;setRunMsg(run.runId+" 전송됨 · 전처리 중 (계속 입력 가능)");
+  await preflight(run);
+  return run;
+}
+// 전처리(STRUCTURE, 결정론) → 기준정보 해소(MASTER_RESOLVE) → **게이트1**.
+// 미등록 후보·충돌이 있으면 여기서 멈춘다 — 좌표가 틀린 채로 분류·매핑하면 전부 오염되므로.
+// 사람이 기준정보를 등록(또는 '이번엔 무시')하면 EXTRACT로 넘어간다(데드락 방지).
+async function preflight(run){
+  try{
+    const st=(await apiPost({step:"STRUCTURE",input:{source_id:run.sourceId}})).result;
+    run.pre={stats:st.stats};run.phase="master";updateRunBox(run);saveRuns();
+    const mr=(await apiPost({step:"MASTER_RESOLVE",input:{source_id:run.sourceId}})).result;
+    run.pre.master=mr;
+    if(mr.needs_review){
+      run.status="gate";run.phase="gate";updateRunBox(run);saveRuns();
+      setRunMsg(run.runId+" — 기준정보 검토 필요 (추출 대기)");return;
+    }
+    await startExtract(run);
+  }catch(e){run.status="error";run.error=(e.code?e.code+" ":"")+e.message;updateRunBox(run);saveRuns();}
+}
+async function startExtract(run){
+  run.status="running";run.phase="extract";run._t0=Date.now();updateRunBox(run);saveRuns();
   try{
     const ext=await apiPost({step:"EXTRACT",run_id:run.runId,input:{source_id:run.sourceId}});
     run.runId=ext.run_id||run.runId;pollRunBox(run);
   }catch(e){run.status="error";run.error=(e.code?e.code+" ":"")+e.message;updateRunBox(run);saveRuns();}
-  return run;
+}
+// 게이트: 기준정보를 등록한 뒤 다시 확인 (결정론이라 등록만 하면 즉시 해소된다)
+async function gateRecheck(runId){
+  const run=findRun(runId);if(!run)return;
+  try{
+    const mr=(await apiPost({step:"MASTER_RESOLVE",input:{source_id:run.sourceId}})).result;
+    run.pre=run.pre||{};run.pre.master=mr;
+    if(mr.needs_review){updateRunBox(run);saveRuns();
+      toast("아직 미등록 후보/충돌이 남아 있습니다");return;}
+    toast("기준정보 해소 완료 — 추출을 시작합니다");await startExtract(run);
+  }catch(e){toast("재확인 실패: "+(e.code?e.code+" ":"")+e.message);}
+}
+// 게이트 우회: 이번 건은 기준정보 없이 진행(좌표 일부가 비게 됨 — 데드락 방지용 명시적 선택)
+async function gateIgnore(runId){
+  const run=findRun(runId);if(!run)return;
+  const n=((run.pre&&run.pre.master&&run.pre.master.unknown_candidates)||[]).length;
+  if(!confirm("기준정보 등록 없이 이번 건만 추출합니다.\n"+
+    (n?"· 미등록 후보 "+n+"건은 좌표로 잡히지 않습니다.\n":"")+
+    "· 나중에 기준정보를 등록하고 재추출하면 좌표가 붙습니다.\n\n진행할까요?"))return;
+  if(run.pre&&run.pre.master)run.pre.master.ignored=true;
+  await startExtract(run);
 }
 // 기존 수집을 그대로 재추출 — CAPTURE 없이 원본 source로 직접 EXTRACT.
 // 새 수집을 만들지 않으므로 수집이 합쳐지지 않고, 원본 captured_at(수집 시각)도 보존된다.
@@ -1110,11 +1179,23 @@ function runStagesHtml(run){
     ex=`<span class="stg ok">EXTRACT ✓${j.extract_ms?" "+(j.extract_ms/1000).toFixed(1)+"초":""}</span>`;
   }else if(run.status==="error"){
     ex=`<span class="stg err">EXTRACT ✗${j.extract_ms?" "+(j.extract_ms/1000).toFixed(1)+"초":""}</span>`;
-  }
+  }else if(run.status==="gate"){ex=`<span class="stg wait">EXTRACT 대기</span>`;}
   let cm="";
   if(run.committed)cm=`<span class="sarw">›</span><span class="stg ok">COMMIT ✓</span>`;
   else if(run.status==="done")cm=`<span class="sarw">›</span><span class="stg wait">COMMIT 대기</span>`;
-  return `<span class="stg ok">CAPTURE ✓</span><span class="sarw">›</span>${ex}${cm}`;
+  // 전처리·기준정보 단계 — pre가 없고 이미 끝난 run은 **구버전 히스토리**라 기존 표시를 유지한다
+  const p=run.pre||{};
+  const legacy=!p.stats&&(run.status==="done"||run.status==="error"||run.committed);
+  let mid="";
+  if(!legacy){
+    const str=p.stats?`<span class="stg ok">STRUCTURE ✓ ${p.stats.docs}문서</span>`
+      :run.phase==="structure"?`<span class="stg run">STRUCTURE ⏳</span>`:`<span class="stg wait">STRUCTURE</span>`;
+    const mst=p.master?(run.status==="gate"?`<span class="stg run">기준정보 ⏸ 검토</span>`
+        :`<span class="stg ok">기준정보 ✓${(p.master.ignored?" (무시)":"")}</span>`)
+      :run.phase==="master"?`<span class="stg run">기준정보 ⏳</span>`:`<span class="stg wait">기준정보</span>`;
+    mid=`${str}<span class="sarw">›</span>${mst}<span class="sarw">›</span>`;
+  }
+  return `<span class="stg ok">CAPTURE ✓</span><span class="sarw">›</span>${mid}${ex}${cm}`;
 }
 const CH_KO={mail:"메일",messenger:"메신저",meeting:"회의록",confluence:"Confluence",ticket:"티켓",other:"기타"};
 function profileHtml(p){
@@ -1222,14 +1303,55 @@ async function toggleRecap(runId){
   }
   updateRunBox(run);
 }
+// 좌표 칩 — 해소된 것은 강조, 못 잡은 것은 흐리게(추측하지 않았음을 보여준다)
+function coordChips(c){
+  return `<div class="rb-coord">`+["node","process","product","project"].map(k=>{
+    const v=(c||{})[k];
+    return `<span class="rb-cd${v?'':' none'}">${k}=${v?`<b>${esc(v)}</b>`:'—'}</span>`;}).join("")+`</div>`;
+}
+// 전처리 결과(30루프 접힘·좌표) — 백엔드가 한 일을 눈에 보이게
+function runPreHtml(run){
+  const p=run.pre;if(!p||!p.stats)return "";
+  const s=p.stats,fold=s.folded_dups?` · 인용 중복 <b>${s.folded_dups}</b>건 접힘`:"";
+  const pct=s.chars_in?Math.round(100*s.chars_out/s.chars_in):100;
+  let h=`<div class="rb-pre"><div class="rb-pre-h">전처리 <span class="dim">결정론 · LLM 없음</span></div>
+    <div class="rb-pre-stat">세그먼트 ${s.segments} → 문서 <b>${s.docs}</b>${fold} · ${(s.chars_in||0).toLocaleString()} → ${(s.chars_out||0).toLocaleString()}자 (${pct}%)</div>`;
+  const m=p.master;
+  if(m&&(m.docs||[]).length){
+    h+=`<div class="rb-pre-h" style="margin-top:4px">좌표 해소 <span class="dim">문서 ${m.docs.length}건 · 첫 문서 기준</span></div>`
+      +coordChips(m.docs[0].coordinates);
+  }
+  if(run.guide)h+=`<div class="rb-pre-stat">가이드: ${esc(run.guide)}</div>`;
+  return h+`</div>`;
+}
+// 게이트1 — 기준정보가 확정돼야 추출한다(좌표가 틀리면 분류·매핑이 전부 오염되므로)
+function runGateHtml(run){
+  const m=(run.pre&&run.pre.master)||{},cands=m.unknown_candidates||[],conf=[];
+  (m.docs||[]).forEach(d=>{
+    (d.conflicts||[]).forEach(c=>conf.push(`${c.type}: ${(c.ids||[]).join(" vs ")} (둘 다 언급 — 미확정)`));
+    (d.guide_conflicts||[]).forEach(c=>conf.push(`${c.field}: 본문 ${c.body} vs 가이드 ${c.guide} (본문 우선)`));});
+  let h=`<div class="rb-gate"><div class="rb-gate-h">⏸ 기준정보 검토 필요 — 좌표 확정 후 추출합니다</div>`;
+  if(cands.length)h+=`<div class="rb-gate-row">미등록 후보 ${cands.length}: `
+    +cands.map(c=>`<span class="mst-chip">${esc(c.surface)}</span>`).join(" ")
+    +` <span class="dim">— 기준정보 탭에서 등록하면 좌표가 붙습니다</span></div>`;
+  if(conf.length)h+=`<div class="rb-gate-row">충돌: ${conf.map(esc).join(" · ")}</div>`;
+  h+=`<div class="rb-gate-acts">
+      <button class="btn" data-gatemst="1">기준정보 탭 열기</button>
+      <button class="btn primary" data-gatechk="${escAttr(run.runId)}">↻ 다시 확인</button>
+      <button class="btn" data-gateign="${escAttr(run.runId)}">이번엔 무시하고 추출</button>
+    </div></div>`;
+  return h;
+}
 function runBoxHtml(run){
   const st=run.status;
-  const badge=st==="running"?'<span class="rb-status running">처리중</span>'
+  const badge=st==="gate"?'<span class="rb-status gate">기준정보 검토</span>'
+    :st==="running"?'<span class="rb-status running">처리중</span>'
     :st==="error"?'<span class="rb-status error">실패</span>'
     :run.committed?'<span class="rb-status committed">확정됨</span>'
     :'<span class="rb-status done">검토대기</span>';
   let body,commit="";
-  if(st==="running"){body=`<div class="rb-run">추출 중… <span class="rb-timer" data-timer>0초</span> <span style="color:var(--muted)">(모델 판단 대기)</span></div>`;}
+  if(st==="gate"){body=runPreHtml(run)+runGateHtml(run);}
+  else if(st==="running"){body=runPreHtml(run)+`<div class="rb-run">추출 중… <span class="rb-timer" data-timer>0초</span> <span style="color:var(--muted)">(모델 판단 대기)</span></div>`;}
   else if(st==="error"){body=`<div class="rb-err">${esc(run.error||'추출 실패')}</div>`+
     `<div class="rb-actions"><button class="rb-retry" data-retry="${escAttr(run.runId)}">↻ 재시도</button></div>`;}
   else if(run.committed){   // 확정 후: 원문 + 접힌 복기 스냅샷(읽기전용)
@@ -1286,8 +1408,20 @@ async function restoreRuns(){
     let job=null;try{const r=await fetch("api/run_status?id="+encodeURIComponent(s.runId));if(r.ok)job=await r.json();}catch(e){}
     const srv=byId[s.runId];
     const known=!!srv||(job&&job.state&&job.state!=="unknown");
-    if(!known)continue;   // 서버가 모르는 run(초기화 등) → 히스토리에서 자동 제거
+    if(!known){
+      // 기준정보 게이트에서 멈춘 run은 EXTRACT를 시작하지 않아 서버에 job·proposal이 없다.
+      // 원문(source)이 살아 있으면 로컬 기록으로 복원한다 — 새로고침에 검토 대기가 사라지면 안 된다.
+      if(s.status==="gate"&&s.sourceId){
+        let alive=false;
+        try{alive=(await fetch("api/source_text?id="+encodeURIComponent(s.sourceId))).ok;}catch(e){}
+        if(alive)state.runs.push({runId:s.runId,sourceId:s.sourceId,snippet:s.snippet,
+          guide:s.guide||null,status:"gate",phase:"gate",pre:s.pre||null,
+          reviews:s.reviews||{},committed:false,proposal:null,startedAt:s.startedAt,_t0:Date.now()});
+      }
+      continue;   // 그 외 서버가 모르는 run(초기화 등) → 히스토리에서 자동 제거
+    }
     const run={runId:s.runId,sourceId:s.sourceId,channel:s.channel,snippet:s.snippet,
+      guide:s.guide||null,pre:s.pre||null,phase:s.phase,
       reviews:s.reviews||{},committed:(srv&&srv.committed)||s.committed||false,
       commitMsg:s.commitMsg,status:"done",proposal:null,startedAt:s.startedAt,_t0:Date.now(),_job:job};
     if(run.committed)run.status="done";
@@ -2078,6 +2212,12 @@ document.addEventListener("click",e=>{
   if(ehide){hideEntity(ehide.dataset.enthide,ehide.dataset.hidden!=="1");return;}
   const edel=e.target.closest("[data-entdel]");
   if(edel){deleteEntity(edel.dataset.entdel);return;}
+  // ── run-box 기준정보 게이트 ──
+  const gchk=e.target.closest("[data-gatechk]");
+  if(gchk){gateRecheck(gchk.dataset.gatechk);return;}
+  const gign=e.target.closest("[data-gateign]");
+  if(gign){gateIgnore(gign.dataset.gateign);return;}
+  if(e.target.closest("[data-gatemst]")){location.hash="#mst";return;}
   // ── 기준정보 탭 ──
   if(e.target.id==="btnMstSeed"){const p=$("#mstSeedPanel");p.hidden=!p.hidden;return;}
   if(e.target.id==="btnMstPlan"){mstPlan();return;}

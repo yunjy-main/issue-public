@@ -337,10 +337,13 @@ def save_vocab_projection(vocab):
 
 
 # ---------- 원본 (capture-first). 이벤트 먼저, 그다음 projection ----------
-def capture_source(text, channel=None, actor="human", first_captured_at=None):
+def capture_source(text, channel=None, actor="human", first_captured_at=None, guide=None):
     """channel은 하위호환 인자 — 사용자가 지정하지 않으며(UI에서 제거됨),
     채널 판정은 EXTRACT 단계에서 LLM이 source_profile로 수행해 set_source_profile로 스탬프한다.
-    first_captured_at: 재추출 시 원본의 '최초 전송 시각'을 이어받아 계보에 보존."""
+    first_captured_at: 재추출 시 원본의 '최초 전송 시각'을 이어받아 계보에 보존.
+    guide: 사용자가 준 선택적 가이드('이 본문은 어느 공정/제품/과제 건인지'). 본문과 **분리 보관**한다 —
+    가이드는 사실이 아니라 해석 힌트라서 원문에 섞으면 출처가 오염된다(본문이 모호할 때만 좌표를 채우고,
+    본문이 명시하면 본문이 이긴다: MASTER_RESOLVE)."""
     with _LOCK:
         sid = next_id("SRC")
         now = now_iso()
@@ -352,6 +355,9 @@ def capture_source(text, channel=None, actor="human", first_captured_at=None):
             "captured_at": now,
             "first_captured_at": fca,
         }
+        g = (guide or "").strip()
+        if g:
+            meta["guide"] = g
         # 원문 저장(불변) → 이벤트 → projection
         _atomic_write(os.path.join(DIRS["raw"], sid + ".txt"), text)
         append_event({"event": "source.capture", "id": sid, "actor": actor, "data": meta})
