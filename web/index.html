@@ -266,6 +266,54 @@
   .rel-grid .r-occ,.rel-grid .r-cap{font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
   .rel-grid .r-mk{display:inline-block;width:9px;text-align:center}
   .rel-grid .mk-approx{color:var(--warn)}.rel-grid .mk-unc{color:var(--bad);font-weight:700}
+  /* ---- 기준정보(마스터) 탭 ---- */
+  .mst-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 0 8px;border-bottom:1px solid var(--border);margin-bottom:8px}
+  .mst-bar b{font-size:12px}
+  .mst-bar .dim{flex:1;min-width:140px;font-size:10px}
+  .mstmsg{font-size:10px;color:var(--muted)}
+  .mst-body{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:10px;align-items:start}
+  @media(max-width:720px){.mst-body{grid-template-columns:1fr}}
+  .mst-sec{margin-bottom:9px}
+  .mst-sec-h{display:flex;gap:6px;align-items:center;font-size:10px;color:var(--muted);font-family:var(--mono);
+    font-weight:700;margin:2px 0 3px;padding-bottom:2px;border-bottom:1px solid var(--border)}
+  .mst-sec-h .dim{flex:1}
+  .mst-row{display:flex;flex-wrap:wrap;gap:4px;align-items:baseline;padding:2px 5px;border-radius:4px;cursor:pointer;font-size:11.5px}
+  .mst-row:hover{background:var(--hover)}
+  .mst-row.mst-on{background:var(--chip);outline:1px solid var(--accent)}
+  .mst-proc{padding-left:12px}
+  .mst-del{opacity:.5;cursor:default}
+  .mst-sub{padding:1px 0 4px 12px}
+  .mst-al{display:inline-flex;flex-wrap:wrap;gap:3px}
+  .mst-chip{background:var(--chip);border-radius:7px;padding:0 5px;font-size:9px;color:var(--muted);font-family:var(--mono)}
+  .mst-form{border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--chip)}
+  .mst-form-h{font-size:11px;font-weight:700;margin-bottom:6px;display:flex;gap:5px;align-items:center}
+  .mst-form .edf{display:block;margin-bottom:6px}
+  .mst-form .edf>span{display:block;font-size:10px;color:var(--muted);margin-bottom:2px}
+  .mst-form input,.mst-form select,.mst-form textarea{width:100%;font-size:11.5px;padding:3px 5px;
+    border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-family:inherit}
+  .mst-form textarea{min-height:44px;resize:vertical}
+  .mst-form input[readonly]{opacity:.6}
+  .req{color:var(--bad)}
+  .btn.danger{color:var(--bad);border-color:var(--bad)}
+  .btn.mini{font-size:9.5px;padding:1px 5px}
+  /* 정형 시드 패널 */
+  .seed-panel{border:1px dashed var(--border);border-radius:6px;padding:8px;margin-bottom:9px;background:var(--chip)}
+  .seed-h{font-size:10px;font-weight:700;color:var(--muted);margin-bottom:4px}
+  .seed-h .dim{font-weight:400}
+  #mstSeedText{width:100%;min-height:104px;font-family:var(--mono);font-size:10.5px;padding:5px;
+    border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);resize:vertical}
+  .seed-ctl{display:flex;gap:6px;align-items:center;margin-top:5px;flex-wrap:wrap}
+  .seed-ctl .dim{font-size:10px}
+  .plan-h{font-size:10.5px;margin:7px 0 3px}
+  .plan-err{font-size:10.5px;color:var(--bad);background:var(--bg);border-radius:4px;padding:5px;margin:4px 0}
+  .plan-list{display:flex;flex-direction:column;gap:2px;margin:4px 0}
+  .plan-row{display:flex;gap:5px;align-items:baseline;font-size:11px;padding:2px 4px;border-radius:4px;cursor:pointer}
+  .plan-row:hover{background:var(--hover)}
+  .plan-sign{font-family:var(--mono);font-weight:700;width:9px;text-align:center}
+  .op-c .plan-sign{color:var(--ok,#3a9)}.op-u .plan-sign{color:var(--warn)}.op-s{opacity:.5}
+  .plan-op{font-family:var(--mono);font-size:9px;color:var(--muted);width:42px}
+  .plan-det{color:var(--muted);font-size:10px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .plan-warn{color:var(--warn);font-size:9.5px}
   .rel-x{border:none;background:none;color:var(--muted);cursor:pointer;font-size:11px;padding:0 2px;line-height:1;opacity:.55}
   .rel-x:hover{color:var(--bad);opacity:1}
   /* 관계 추가 편집기 */
@@ -508,6 +556,7 @@
   <a href="#run" data-tab="run">입력</a>
   <a href="#eng" data-tab="eng">프롬프트</a>
   <a href="#docs" data-tab="docs">문서</a>
+  <a href="#mst" data-tab="mst">기준정보</a>
   <a href="#know" data-tab="know">이슈</a>
 </nav>
 <div class="toolbar" id="docToolbar">
@@ -568,6 +617,44 @@
     <div class="eng-note" id="engNote"></div>
     <div class="eng-pipe" id="engPipe"></div>
     <div id="engList"></div>
+  </section>
+  <section class="screen" id="scrMst" hidden>
+    <div class="mst-bar">
+      <b>기준정보</b>
+      <span class="dim">사람이 만드는 좌표축 — node → process · product · project. 이슈·사건은 이 좌표에만 붙는다.</span>
+      <button class="btn" id="btnMstSeed">📥 시드 붙여넣기</button>
+      <span class="mstmsg" id="mstMsg"></span>
+    </div>
+    <div class="seed-panel" id="mstSeedPanel" hidden>
+      <div class="seed-h">정형 시드
+        <span class="dim">JSON · YAML · TSV/CSV(헤더 필요) — <b>결정론 파싱</b>(LLM 안 씀). 자유형식은 감지 실패로 알려준다.</span>
+      </div>
+      <textarea id="mstSeedText" spellcheck="false" placeholder='사내 마스터에서 복사해 그대로 붙여넣으세요.
+
+JSON:   {"nodes":[{"id":"N7","aliases":["7nm","7 나노"]}],
+         "processes":[{"id":"N7P","node":"N7","aliases":["N7+"]}]}
+
+YAML:   nodes:
+          - id: N7
+            aliases: [7nm, 7 나노]
+        processes:
+          - id: N7P
+            node: N7
+            aliases:
+              - N7+
+
+TSV:    type	id	node	aliases
+        process	N7P	N7	N7+, N7 plus'></textarea>
+      <div class="seed-ctl">
+        <button class="btn primary" id="btnMstPlan">계획 생성</button>
+        <span class="dim" id="mstSeedMsg">파싱 → 현재 마스터와 대조 → create/update/skip 계획을 보여줍니다. 적용은 선택 후.</span>
+      </div>
+      <div id="mstPlanPanel"></div>
+    </div>
+    <div class="mst-body">
+      <div class="mst-tree" id="mstTree"></div>
+      <div class="mst-form" id="mstForm"></div>
+    </div>
   </section>
   <footer>run #0 — 이 시스템은 자기 자신의 방법론으로 만들어진다 (M2 원칙 0)</footer>
 </main>
@@ -1422,6 +1509,172 @@ function renderIssueList(){
     orphans.forEach(oid=>rows.push(issueRowHtml(byId[oid],0,false,false)));}
   $("#issueList").innerHTML=tableWrap(rows.join(""));
 }
+// ── 기준정보(마스터) 관리 — 사람이 만드는 좌표축. 전통 CRUD + 정형 시드(결정론 파싱) ──
+// 자연어 CRUD는 **별도 독립 flow**로 붙는다(같은 저장 경로 MASTER_UPSERT를 재사용).
+const MST_LABEL={node:"node",process:"process",product:"product",project:"project"};
+async function loadMaster(force){
+  if(state.master&&!force)return state.master;
+  const j=await api("api/master");
+  state.master=j.master||{nodes:[],processes:[],products:[],projects:[]};
+  state.masterDeleted=j.deleted||[];
+  return state.master;
+}
+function mstItems(typ){return (state.master||{})[{node:"nodes",process:"processes",product:"products",project:"projects"}[typ]]||[];}
+function mstFind(typ,id){return mstItems(typ).find(x=>String(x.id).toLowerCase()===String(id).toLowerCase());}
+function aliasChips(it){
+  const a=it.aliases||[];
+  return a.length?`<span class="mst-al">${a.map(x=>`<span class="mst-chip">${esc(x)}</span>`).join("")}</span>`:'';
+}
+function renderMaster(){
+  const m=state.master||{nodes:[],processes:[],products:[],projects:[]};
+  const byNode={};(m.processes||[]).forEach(p=>{(byNode[p.node]=byNode[p.node]||[]).push(p);});
+  const sel=state.mstSel||"";
+  const selCls=k=>sel===k?" mst-on":"";
+  let h=`<div class="mst-sec"><div class="mst-sec-h">node → process
+      <span class="dim">${(m.nodes||[]).length} node · ${(m.processes||[]).length} process</span>
+      <button class="btn mini" data-mstnew="node">+ node</button></div>`;
+  if(!(m.nodes||[]).length)h+=`<div class="ent-empty">등록된 node 없음 — 시드를 붙여넣거나 + node</div>`;
+  (m.nodes||[]).forEach(n=>{
+    h+=`<div class="mst-row mst-node${selCls("node:"+n.id)}" data-mstsel="node:${escAttr(n.id)}">
+          <b>${esc(n.id)}</b>${aliasChips(n)}${n.label?`<span class="dim"> ${esc(n.label)}</span>`:''}</div>`;
+    (byNode[n.id]||[]).forEach(p=>{
+      h+=`<div class="mst-row mst-proc${selCls("process:"+p.id)}" data-mstsel="process:${escAttr(p.id)}">
+            <span class="dim">└</span> <b>${esc(p.id)}</b>${aliasChips(p)}${p.label?`<span class="dim"> ${esc(p.label)}</span>`:''}</div>`;
+    });
+    h+=`<div class="mst-sub"><button class="btn mini" data-mstnew="process" data-node="${escAttr(n.id)}">+ process (${esc(n.id)})</button></div>`;
+  });
+  h+=`</div>`;
+  [["product","제품"],["project","과제"]].forEach(([typ,ko])=>{
+    const list=mstItems(typ);
+    h+=`<div class="mst-sec"><div class="mst-sec-h">${typ} <span class="dim">${ko} · ${list.length}</span>
+         <button class="btn mini" data-mstnew="${typ}">+ ${typ}</button></div>`;
+    if(!list.length)h+=`<div class="ent-empty">없음</div>`;
+    list.forEach(x=>{h+=`<div class="mst-row${selCls(typ+":"+x.id)}" data-mstsel="${typ}:${escAttr(x.id)}">
+        <b>${esc(x.id)}</b>${aliasChips(x)}${x.label?`<span class="dim"> ${esc(x.label)}</span>`:''}</div>`;});
+    h+=`</div>`;
+  });
+  if((state.masterDeleted||[]).length){
+    h+=`<div class="mst-sec"><div class="mst-sec-h">🗑 삭제됨 <span class="dim">${state.masterDeleted.length}</span></div>`;
+    state.masterDeleted.forEach(x=>{h+=`<div class="mst-row mst-del"><b>${esc(x.id)}</b>
+        <span class="dim">${esc(x.type||'')}</span>
+        <button class="btn mini" data-mstrestore="${escAttr((x.type||'')+':'+x.id)}">↩ 복원</button></div>`;});
+    h+=`</div>`;
+  }
+  $("#mstTree").innerHTML=h;
+  $("#mstForm").innerHTML=state.mstEdit?mstFormHtml(state.mstEdit):
+    '<div class="ent-empty">좌측에서 항목을 고르거나 + 버튼으로 새로 만드세요.</div>';
+}
+function mstFormHtml(ed){
+  const {typ,id,isNew}=ed, it=isNew?{}:(mstFind(typ,id)||{});
+  const nodes=mstItems("node");
+  const nodeSel=typ==="process"
+    ? `<label class="edf"><span>소속 node <b class="req">*</b></span><select data-mf="node">`
+      +nodes.map(n=>`<option ${((it.node||ed.node)===n.id)?'selected':''}>${esc(n.id)}</option>`).join("")
+      +`</select></label>`:'';
+  return `<div class="mst-form-h">${isNew?'새 항목':'편집'} <span class="ty-badge">${esc(typ)}</span>
+      ${isNew?'':`<span class="tag">rev.${esc(it.revision||1)}</span>`}</div>
+    <label class="edf"><span>id <b class="req">*</b> <span class="dim">정준 이름(예: N7P)</span></span>
+      <input data-mf="id" value="${escAttr(it.id||"")}" ${isNew?'':'readonly'} placeholder="N7P"></label>
+    ${nodeSel}
+    <label class="edf"><span>label <span class="dim">설명(선택)</span></span>
+      <input data-mf="label" value="${escAttr(it.label||"")}" placeholder="7nm급 노드"></label>
+    <label class="edf"><span>aliases <span class="dim">표면형, 쉼표 구분 — 원문에 나오는 모든 표기</span></span>
+      <textarea data-mf="aliases" placeholder="N7+, N7 plus, 7나노 플러스">${esc((it.aliases||[]).join(", "))}</textarea></label>
+    <div class="edf-actions">
+      <button class="btn primary" data-mstsave="1">저장</button>
+      <button class="btn" data-mstcancel="1">취소</button>
+      ${isNew?'':`<button class="btn danger" data-mstdel="${escAttr(typ+":"+id)}">🗑 삭제</button>`}
+    </div>
+    <div class="edf-protected">id는 좌표의 정준키라 생성 후 바꿀 수 없습니다(바꾸려면 새로 만들고 기존 것을 삭제). 삭제는 참조 중이면 차단됩니다.</div>`;
+}
+function mstMsg(m,err){const el=$("#mstMsg");if(el)el.innerHTML=err?`<span class="err">${esc(m)}</span>`:esc(m);}
+async function mstSave(){
+  const ed=state.mstEdit;if(!ed)return;
+  const f={};document.querySelectorAll('#mstForm [data-mf]').forEach(el=>{f[el.dataset.mf]=el.value;});
+  const id=(f.id||"").trim();
+  if(!id){alert("id는 필수입니다.");return;}
+  const item={id,label:(f.label||"").trim()||null,
+    aliases:(f.aliases||"").split(",").map(s=>s.trim()).filter(Boolean)};
+  if(ed.typ==="process")item.node=(f.node||"").trim();
+  try{
+    await apiPost({step:"MASTER_UPSERT",input:{mtype:ed.typ,item}});
+    state.mstEdit=null;state.mstSel=ed.typ+":"+id;
+    await loadMaster(true);renderMaster();mstMsg("저장했습니다: "+id);
+  }catch(e){alert("저장 실패: "+(e.code?e.code+" ":"")+e.message);}
+}
+async function mstDelete(key){
+  const [typ,id]=key.split(":");
+  let imp={refs:0,child_processes:[]};
+  try{imp=(await apiPost({step:"MASTER_IMPACT",input:{mtype:typ,id}})).result||imp;}catch(e){}
+  const warn=[];
+  if(imp.refs)warn.push("· 이 좌표를 쓰는 항목 "+imp.refs+"건");
+  if((imp.child_processes||[]).length)warn.push("· 하위 process "+imp.child_processes.length+"개: "+imp.child_processes.join(", "));
+  const blocked=warn.length>0;
+  const msg="'"+id+"' ("+typ+")를 삭제합니다.\n"+(warn.join("\n")||"· 참조 없음")+
+    (blocked?"\n\n⚠ 참조/하위가 있어 기본 삭제는 차단됩니다.\n확인을 누르면 강제 삭제(force)합니다 — 좌표가 끊어질 수 있습니다.":"")+"\n\n진행할까요?";
+  if(!confirm(msg))return;
+  try{
+    await apiPost({step:"MASTER_DELETE",input:{mtype:typ,id,force:blocked}});
+    state.mstEdit=null;state.mstSel=null;await loadMaster(true);renderMaster();mstMsg("삭제했습니다: "+id);
+  }catch(e){alert("삭제 실패: "+(e.code?e.code+" ":"")+e.message);}
+}
+async function mstRestore(key){
+  const [typ,id]=key.split(":");
+  try{await apiPost({step:"MASTER_RESTORE",input:{mtype:typ,id}});
+    await loadMaster(true);renderMaster();mstMsg("복원했습니다: "+id);}
+  catch(e){alert("복원 실패: "+(e.code?e.code+" ":"")+e.message);}
+}
+// ── 정형 시드 → 결정론 계획 → 선택 적용 (전통 CRUD와 같은 저장 경로) ──
+async function mstPlan(){
+  const text=$("#mstSeedText").value;
+  if(!text.trim()){alert("시드 텍스트를 붙여넣으세요.");return;}
+  $("#mstPlanPanel").innerHTML='<div class="ent-empty">파싱 중…</div>';
+  try{
+    const r=(await apiPost({step:"MASTER_SEED_PLAN",input:{text}})).result;
+    state.mstPlan=r.plan||[];
+    let h=`<div class="plan-h">감지 형식 <b>${esc(r.format)}</b> · 항목 ${(r.items||[]).length} · 계획 ${state.mstPlan.length}</div>`;
+    if((r.errors||[]).length)h+=`<div class="plan-err">${r.errors.map(esc).join("<br>")}</div>`;
+    if(!state.mstPlan.length)h+=`<div class="ent-empty">적용할 계획 없음</div>`;
+    else{
+      h+=`<div class="plan-list">`+state.mstPlan.map((p,i)=>{
+        const cls=p.op==="create"?"op-c":p.op==="update"?"op-u":"op-s";
+        const sign=p.op==="create"?"+":p.op==="update"?"~":"=";
+        let det="";
+        if(p.op==="create")det=(p.node?`node=${esc(p.node)} `:'')+((p.aliases||[]).length?`별칭 ${p.aliases.map(esc).join(", ")}`:'');
+        else if(p.op==="update"){const c=p.changes||{};const bits=[];
+          if(c.aliases_add)bits.push("별칭 +"+c.aliases_add.map(esc).join(", "));
+          if(c.label)bits.push(`label ${esc(c.label.from||'—')} → ${esc(c.label.to)}`);
+          if(c.node)bits.push(`node ${esc(c.node.from||'—')} → ${esc(c.node.to)}`);
+          det=bits.join(" · ");}
+        else det=esc(p.why||"변경 없음");
+        return `<label class="plan-row ${cls}">
+          <input type="checkbox" data-planix="${i}" ${p.op==="skip"?'disabled':'checked'}>
+          <span class="plan-sign">${sign}</span><span class="plan-op">${esc(p.op)}</span>
+          <span class="ty-badge">${esc(p.type)}</span><b>${esc(p.id)}</b>
+          <span class="plan-det">${det}</span>
+          ${p.warn?`<span class="plan-warn">⚠ ${esc(p.warn)}</span>`:''}</label>`;
+      }).join("")+`</div>
+      <div class="seed-ctl"><button class="btn primary" id="btnMstApply">선택 적용</button>
+        <span class="dim">적용은 전통 CRUD와 동일한 저장 경로·검증을 지납니다.</span></div>`;
+    }
+    $("#mstPlanPanel").innerHTML=h;
+  }catch(e){$("#mstPlanPanel").innerHTML=`<div class="plan-err">계획 생성 실패: ${esc((e.code?e.code+" ":"")+e.message)}</div>`;}
+}
+async function mstApply(){
+  const picked=[];
+  document.querySelectorAll('#mstPlanPanel [data-planix]').forEach(cb=>{
+    if(cb.checked)picked.push(state.mstPlan[+cb.dataset.planix]);});
+  if(!picked.length){alert("적용할 항목을 선택하세요.");return;}
+  try{
+    const r=(await apiPost({step:"MASTER_SEED_APPLY",input:{apply:picked}})).result;
+    await loadMaster(true);renderMaster();
+    let m="적용 "+r.n+"건";
+    if((r.failed||[]).length)m+=" · 실패 "+r.failed.length+"건: "+r.failed.map(f=>f.id+"("+f.error+")").join(", ");
+    mstMsg(m,(r.failed||[]).length>0);
+    $("#mstPlanPanel").innerHTML="";$("#mstSeedText").value="";
+  }catch(e){alert("적용 실패: "+(e.code?e.code+" ":"")+e.message);}
+}
+
 // ── 관계 편집기(상세페이지) — 사람이 직접 이슈 계층/관계를 만들고 해제 ──
 function relAddHtml(e){
   if(e.state&&e.state!=="active")return "";   // 휴지통/병합 항목엔 관계 추가 안 함
@@ -1715,7 +1968,7 @@ async function applyDedup(){
 }
 
 /* ---------- routing & events ---------- */
-const TABS=["run","eng","docs","know"];   // 순서: 입력(첫 화면) · 프롬프트 · 문서 · 이슈(끝 화면)
+const TABS=["run","eng","docs","mst","know"];   // 입력(첫 화면) · 프롬프트 · 문서 · 기준정보 · 이슈(끝 화면)
 function setTab(tab){
   if(!TABS.includes(tab))tab="run";
   state.tab=tab;
@@ -1723,11 +1976,14 @@ function setTab(tab){
   $("#docToolbar").hidden=tab!=="docs";
   $("#scrRun").hidden=tab!=="run";
   $("#scrEng").hidden=tab!=="eng";
+  $("#scrMst").hidden=tab!=="mst";
   $("#scrKnow").hidden=tab!=="know";
   $("#scrEnt").hidden=true;   // 상세는 openEntity에서만 표시
   if(tab!=="docs"){$("#scrList").hidden=true;$("#scrDoc").hidden=true;$("#scrSearch").hidden=true;$("#btnBack").hidden=true;}
   if(tab==="run")renderHistory();
   if(tab==="eng")loadEngines();
+  if(tab==="mst")loadMaster(true).then(renderMaster).catch(e=>{
+    $("#mstTree").innerHTML='<div class="plan-err">기준정보 로드 실패: '+esc(e.message)+'</div>';});
   if(tab==="know")loadIssues();
 }
 function route(){
@@ -1738,6 +1994,7 @@ function route(){
   if(me){setTab("know");openEntity(me[1]);return;}   // setTab이 목록을, openEntity가 상세를 표시
   if(h==="#eng"){setTab("eng");return;}
   if(h==="#docs"){setTab("docs");show("list");return;}
+  if(h==="#mst"){setTab("mst");return;}
   if(h==="#know"){setTab("know");return;}
   setTab("run");   // 기본 = 입력 (첫 화면엔 항상 텍스트박스+전송)
 }
@@ -1821,6 +2078,24 @@ document.addEventListener("click",e=>{
   if(ehide){hideEntity(ehide.dataset.enthide,ehide.dataset.hidden!=="1");return;}
   const edel=e.target.closest("[data-entdel]");
   if(edel){deleteEntity(edel.dataset.entdel);return;}
+  // ── 기준정보 탭 ──
+  if(e.target.id==="btnMstSeed"){const p=$("#mstSeedPanel");p.hidden=!p.hidden;return;}
+  if(e.target.id==="btnMstPlan"){mstPlan();return;}
+  if(e.target.id==="btnMstApply"){mstApply();return;}
+  const mnew=e.target.closest("[data-mstnew]");
+  if(mnew){state.mstEdit={typ:mnew.dataset.mstnew,isNew:true,node:mnew.dataset.node||null};
+    state.mstSel=null;renderMaster();return;}
+  const msave=e.target.closest("[data-mstsave]");
+  if(msave){mstSave();return;}
+  const mcancel=e.target.closest("[data-mstcancel]");
+  if(mcancel){state.mstEdit=null;renderMaster();return;}
+  const mdel=e.target.closest("[data-mstdel]");
+  if(mdel){mstDelete(mdel.dataset.mstdel);return;}
+  const mrst=e.target.closest("[data-mstrestore]");
+  if(mrst){mstRestore(mrst.dataset.mstrestore);return;}
+  const msel=e.target.closest("[data-mstsel]");
+  if(msel){const [t,...rest]=msel.dataset.mstsel.split(":");const id=rest.join(":");
+    state.mstSel=msel.dataset.mstsel;state.mstEdit={typ:t,id,isNew:false};renderMaster();return;}
   const radd=e.target.closest("[data-reladd]");
   if(radd){addRelation(radd.dataset.reladd);return;}
   const rrem=e.target.closest("[data-relremove]");

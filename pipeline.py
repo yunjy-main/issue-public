@@ -20,6 +20,16 @@ REL_TYPES = {"part_of", "related_to", "derived_from", "addresses", "affects", "a
              "similar_to", "duplicate_of", "recurrence_of", "instance_of", "supports",
              "contradicts", "produces"}
 HIER_TYPES = {"recurrence_of", "duplicate_of", "part_of", "instance_of", "derived_from"}
+# 기준정보(마스터) 오류 — 사람이 읽고 고칠 수 있게 사유를 명시한다.
+_MASTER_ERR = {
+    "E-4301": "미등록 기준정보 유형 (node/process/product/project 중)",
+    "E-4302": "id 필요",
+    "E-4303": "process는 소속 node가 필요합니다",
+    "E-4304": "소속 node가 마스터에 없습니다 (node를 먼저 등록)",
+    "E-4305": "대상 없음/이미 삭제됨",
+    "E-4306": "하위 process가 있어 삭제할 수 없습니다 (하위를 먼저 정리)",
+    "E-4307": "이 좌표를 쓰는 항목이 있어 삭제할 수 없습니다 (재지정 후 삭제)",
+}
 
 
 def _coerce_enums(obj, tid, warnings):
@@ -580,6 +590,128 @@ def handle_step(body):
         if ne is None:
             raise StepError("E-1002", "엔티티 없음: %s" % eid, 404)
         return ok({"entity": ne, "old_id": eid, "new_id": ne["id"]}, ["ENTITY_EDIT", "STOP"])
+
+    # ---------- STRUCTURE: 전처리(분해·중복접기) — 결정론, LLM 없음 ----------
+    if step == "STRUCTURE":
+        sid = inp.get("source_id")
+        text = store.read_source_text(sid)   # 원문 정본은 raw/*.txt (sources/*.json은 메타만)
+        if text is None:
+            raise StepError("E-1003", "원문 없음: %s" % sid, 404)
+        import preprocess
+        res = preprocess.structure(text, sid)
+        store.save_struct_docs(sid, res, inp.get("actor", "human"))
+        return ok(res, ["MASTER_RESOLVE", "EXTRACT", "STOP"])
+
+    if step == "STRUCT_GET":
+        res = store.get_struct_docs(inp.get("source_id"))
+        if res is None:
+            raise StepError("E-1003", "구조화 결과 없음(STRUCTURE 먼저)", 404)
+        return ok(res, ["MASTER_RESOLVE", "STOP"])
+
+    # ---------- 기준정보(마스터) — 사람이 만드는 좌표축 ----------
+    if step == "MASTER_GET":
+        return ok({"master": store.get_master(),
+                   "deleted": [x for k in ("nodes", "processes", "products", "projects")
+                               for x in store.get_master(include_deleted=True)[k]
+                               if x.get("state") == "deleted"]}, ["MASTER_UPSERT", "STOP"])
+
+    if step == "MASTER_UPSERT":   # 전통 CRUD (생성·수정) — 자연어 경로도 결국 여기로
+        typ = inp.get("mtype")
+        row, err = store.master_upsert(typ, inp.get("item") or {}, inp.get("actor", "human"))
+        if err:
+            raise StepError(err, _MASTER_ERR.get(err, "기준정보 저장 실패"), 422)
+        return ok({"item": row}, ["MASTER_GET", "MASTER_UPSERT", "STOP"])
+
+    if step == "MASTER_DELETE":   # 소프트 삭제 — 참조 중이면 차단(force로만 강행)
+        typ, mid = inp.get("mtype"), inp.get("id")
+        row, err = store.master_delete(typ, mid, inp.get("actor", "human"), bool(inp.get("force")))
+        if err:
+            imp = store.master_impact(typ, mid) if err in ("E-4306", "E-4307") else {}
+            raise StepError(err, "%s %s" % (_MASTER_ERR.get(err, "삭제 실패"),
+                                            json.dumps(imp, ensure_ascii=False) if imp else ""), 409)
+        return ok({"id": mid}, ["MASTER_GET", "MASTER_RESTORE", "STOP"])
+
+    if step == "MASTER_RESTORE":
+        row, err = store.master_restore(inp.get("mtype"), inp.get("id"), inp.get("actor", "human"))
+        if err:
+            raise StepError(err, _MASTER_ERR.get(err, "복원 대상 아님"), 404)
+        return ok({"item": row}, ["MASTER_GET", "STOP"])
+
+    if step == "MASTER_IMPACT":   # 삭제 전 영향도 미리보기
+        return ok(store.master_impact(inp.get("mtype"), inp.get("id")), ["MASTER_DELETE", "STOP"])
+
+    if step == "MASTER_SEED_PLAN":   # 시드(JSON/YAML/TSV) → 결정론 파싱 + 병합계획 (적용 안 함)
+        import master as master_mod
+        parsed = master_mod.parse_seed(inp.get("text") or "")
+        cur = store.get_master()
+        plan = master_mod.seed_plan(cur, parsed["items"])
+        return ok({"format": parsed["format"], "errors": parsed["errors"],
+                   "items": parsed["items"], "plan": plan}, ["MASTER_SEED_APPLY", "STOP"])
+
+    if step == "MASTER_SEED_APPLY":   # 사람이 고른 계획만 적용 → 전통 CRUD와 동일 저장 경로
+        actor = inp.get("actor", "human")
+        applied, failed = [], []
+        for row in (inp.get("apply") or []):
+            op = row.get("op")
+            if op == "skip":
+                continue
+            typ = row.get("type")
+            item = {"id": row.get("id")}
+            if op == "create":
+                for k in ("node", "label"):
+                    if row.get(k):
+                        item[k] = row[k]
+                item["aliases"] = row.get("aliases") or []
+            elif op == "update":
+                ch = row.get("changes") or {}
+                if ch.get("aliases_add"):
+                    item["aliases_add"] = ch["aliases_add"]
+                if isinstance(ch.get("label"), dict):
+                    item["label"] = ch["label"].get("to")
+                if isinstance(ch.get("node"), dict):
+                    item["node"] = ch["node"].get("to")
+            else:
+                continue
+            r, err = store.master_upsert(typ, item, actor)
+            (applied if not err else failed).append(
+                {"type": typ, "id": row.get("id"), "op": op, "error": err} if err
+                else {"type": typ, "id": r["id"], "op": op})
+        return ok({"applied": applied, "failed": failed, "n": len(applied)},
+                  ["MASTER_GET", "STOP"])
+
+    if step == "MASTER_RESOLVE":   # 문서+가이드 → 결정론 좌표 해소 + 미등록 후보 (게이트1 입력)
+        import master as master_mod
+        sid = inp.get("source_id")
+        docs = (store.get_struct_docs(sid) or {}).get("docs") if sid else None
+        if docs is None:
+            txt = inp.get("text")
+            if not txt:
+                raise StepError("E-1003", "source_id(STRUCTURE 완료) 또는 text 필요", 422)
+            docs = [{"doc_id": "adhoc", "body_clean": txt}]
+        cur = store.get_master()
+        guide = (inp.get("guide") or "").strip()
+        out, cands = [], []
+        for d in docs:
+            body = d.get("body_clean") or ""
+            r = master_mod.resolve(body, cur)
+            g = master_mod.resolve(guide, cur) if guide else None
+            merged, gconf = dict(r["coordinates"]), []
+            if g:   # 가이드는 **본문이 모호할 때만** 채우는 기본값. 충돌하면 덮지 않고 보고한다.
+                for k, gv in g["coordinates"].items():
+                    bv = merged.get(k)
+                    if gv and not bv:
+                        merged[k] = gv
+                    elif gv and bv and gv != bv:
+                        gconf.append({"field": k, "body": bv, "guide": gv})
+            out.append({"doc_id": d.get("doc_id"), "coordinates": merged,
+                        "found": r["found"], "conflicts": r["conflicts"],
+                        "guide_conflicts": gconf})
+            for c in master_mod.find_unknown_candidates(body, cur):
+                if not any(x["surface"].lower() == c["surface"].lower() for x in cands):
+                    cands.append({"surface": c["surface"], "doc_id": d.get("doc_id")})
+        blocked = any(x["conflicts"] or x["guide_conflicts"] for x in out) or bool(cands)
+        return ok({"docs": out, "unknown_candidates": cands, "needs_review": blocked},
+                  ["MASTER_UPSERT", "MASTER_SEED_PLAN", "EXTRACT", "STOP"])
 
     if step == "VIEW_BUILD":
         return ok({"stats": store.stats()}, ["CAPTURE", "STOP"])

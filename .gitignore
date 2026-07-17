@@ -5,6 +5,8 @@ knowledge/events/
 knowledge/entities/
 knowledge/relations/
 knowledge/state/
+knowledge/master/
+knowledge/docs_struct/
 !knowledge/**/.gitkeep
 knowledge/config/vocabulary.yaml
 knowledge/config/llm.json

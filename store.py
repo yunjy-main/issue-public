@@ -18,6 +18,8 @@ DIRS = {
     "relations": os.path.join(K, "relations"),
     "config": os.path.join(K, "config"),
     "state": os.path.join(K, "state"),
+    "master": os.path.join(K, "master"),   # 기준정보(사람이 만드는 좌표축)
+    "docs": os.path.join(K, "docs_struct"),   # STRUCTURE 산출물(구조화 문서)
 }
 KST = timezone(timedelta(hours=9))
 _LOCK = threading.RLock()   # 쓰기/읽기 모두 이 락 하에서 파일 접근 (win32 os.replace 경합 방지)
@@ -874,6 +876,173 @@ def redirect_relations(absorbed_ids, survivor_id, actor="human"):
             r2 = dict(r); r2["from"] = nf; r2["to"] = nt
             upsert_relation(r2, actor); n += 1
         return n
+
+
+# ---------- 기준정보(마스터) — 사람이 만드는 좌표축 (node→process, product, project) ----------
+# **전통 CRUD와 자연어 CRUD가 공유하는 유일한 저장 경로**. 자연어는 입력 방식일 뿐이고
+# 검증·저장·이력은 전부 여기를 지난다(두 경로가 갈라지면 버그가 난다).
+# projection은 단일 파일(master.json/.yaml) — 항목이 수백 규모라 파일당 1개는 과하고,
+# id에 슬래시 등 파일명 불가 문자가 올 수 있어 안전하다. 이력은 이벤트 로그가 정본.
+_MASTER_TYPES = ("node", "process", "product", "project")
+_MKEY = {"node": "nodes", "process": "processes", "product": "products", "project": "projects"}
+_MREF_FIELD = {"node": "node", "process": "process", "product": "product", "project": "project"}
+
+
+def _master_path():
+    return os.path.join(DIRS["master"], "master")
+
+
+def _akey(a):
+    return re.sub(r"\s+", "", str(a)).lower()
+
+
+def _dedup_aliases(aliases):
+    out, seen = [], set()
+    for a in aliases or []:
+        a = str(a).strip()
+        if not a or _akey(a) in seen:
+            continue
+        seen.add(_akey(a))
+        out.append(a)
+    return out
+
+
+def get_master(include_deleted=False):
+    """마스터 projection. 없으면 빈 마스터(첫 실행)."""
+    with _LOCK:
+        m = _read_json(_master_path() + ".json") or {}
+        out = {}
+        for k in ("nodes", "processes", "products", "projects"):
+            lst = m.get(k) or []
+            out[k] = lst if include_deleted else [x for x in lst if x.get("state", "active") == "active"]
+        return out
+
+
+def master_find(m, typ, mid):
+    for it in (m.get(_MKEY[typ]) or []):
+        if str(it.get("id", "")).lower() == str(mid).lower():
+            return it
+    return None
+
+
+def master_refs(typ, mid):
+    """이 마스터 항목을 좌표로 쓰는 active 엔티티 수 — 삭제 영향도(좌표 파괴 방지)."""
+    f = _MREF_FIELD[typ]
+    return sum(1 for e in list_entities() if str(e.get(f) or "").lower() == str(mid).lower())
+
+
+def master_upsert(typ, item, actor="human"):
+    """마스터 항목 생성/수정. 반환 (row, None) | (None, error_code).
+    aliases는 전체교체(폼) 또는 aliases_add/aliases_remove(계획) 둘 다 받는다."""
+    if typ not in _MASTER_TYPES:
+        return None, "E-4301"
+    mid = str(item.get("id") or "").strip()
+    if not mid:
+        return None, "E-4302"
+    with _LOCK:
+        m = get_master(include_deleted=True)
+        cur = master_find(m, typ, mid)
+        if typ == "process":   # process는 소속 node가 반드시 있고, 그 node가 마스터에 있어야 한다
+            node = item.get("node") or (cur or {}).get("node")
+            if not node:
+                return None, "E-4303"
+            nd = master_find(m, "node", node)
+            if not nd or nd.get("state", "active") != "active":
+                return None, "E-4304"
+        row = dict(cur or {})
+        row.update({"id": mid, "type": typ})
+        for k in ("node", "label"):
+            if item.get(k) is not None:
+                row[k] = item[k]
+        if item.get("aliases") is not None:
+            row["aliases"] = _dedup_aliases(item["aliases"])
+        if item.get("aliases_add"):
+            row["aliases"] = _dedup_aliases(list(row.get("aliases") or []) + list(item["aliases_add"]))
+        if item.get("aliases_remove"):
+            rm = {_akey(a) for a in item["aliases_remove"]}
+            row["aliases"] = [a for a in (row.get("aliases") or []) if _akey(a) not in rm]
+        row.setdefault("aliases", [])
+        row["state"] = "active"
+        row["revision"] = (cur.get("revision", 0) + 1) if cur else 1
+        row["updated_at"] = now_iso()
+        lst = m[_MKEY[typ]]
+        if cur is None:
+            lst.append(row)
+        else:
+            for i, x in enumerate(lst):
+                if str(x.get("id", "")).lower() == mid.lower():
+                    lst[i] = row
+                    break
+        append_event({"event": "master.upsert", "id": mid, "mtype": typ,
+                      "revision": row["revision"], "actor": actor, "data": row})
+        _write_json_yaml(_master_path(), m)
+        return row, None
+
+
+def master_delete(typ, mid, actor="human", force=False):
+    """소프트 삭제(state=deleted). **참조 중이거나 하위 process가 있으면 차단** — 좌표 파괴 방지.
+    force로만 강행(사람이 영향을 보고 결정). 반환 (row, None) | (None, code)."""
+    if typ not in _MASTER_TYPES:
+        return None, "E-4301"
+    with _LOCK:
+        m = get_master(include_deleted=True)
+        cur = master_find(m, typ, mid)
+        if not cur or cur.get("state", "active") != "active":
+            return None, "E-4305"
+        if typ == "node":
+            kids = [p for p in (m.get("processes") or [])
+                    if p.get("state", "active") == "active"
+                    and str(p.get("node", "")).lower() == str(mid).lower()]
+            if kids and not force:
+                return None, "E-4306"
+        if master_refs(typ, mid) and not force:
+            return None, "E-4307"
+        cur["state"] = "deleted"
+        cur["revision"] = cur.get("revision", 1) + 1
+        cur["updated_at"] = now_iso()
+        append_event({"event": "master.delete", "id": mid, "mtype": typ, "actor": actor, "data": cur})
+        _write_json_yaml(_master_path(), m)
+        return cur, None
+
+
+def master_restore(typ, mid, actor="human"):
+    with _LOCK:
+        m = get_master(include_deleted=True)
+        cur = master_find(m, typ, mid)
+        if not cur or cur.get("state") != "deleted":
+            return None, "E-4305"
+        cur["state"] = "active"
+        cur["revision"] = cur.get("revision", 1) + 1
+        cur["updated_at"] = now_iso()
+        append_event({"event": "master.restore", "id": mid, "mtype": typ, "actor": actor, "data": cur})
+        _write_json_yaml(_master_path(), m)
+        return cur, None
+
+
+def master_impact(typ, mid):
+    """삭제 전 영향도 미리보기 — 참조 엔티티 수 + (node면) 하위 process 목록."""
+    m = get_master(include_deleted=True)
+    kids = []
+    if typ == "node":
+        kids = [p["id"] for p in (m.get("processes") or [])
+                if p.get("state", "active") == "active"
+                and str(p.get("node", "")).lower() == str(mid).lower()]
+    return {"refs": master_refs(typ, mid), "child_processes": kids}
+
+
+# ---------- STRUCTURE 산출물(구조화 문서) ----------
+def save_struct_docs(source_id, result, actor="human"):
+    """preprocess.structure() 결과를 저장(원본 source_id 기준). 재실행하면 덮어쓴다(결정론)."""
+    with _LOCK:
+        _write_json_yaml(os.path.join(DIRS["docs"], source_id), result)
+        append_event({"event": "source.structure", "id": source_id, "actor": actor,
+                      "data": {"stats": result.get("stats")}})
+        return result
+
+
+def get_struct_docs(source_id):
+    with _LOCK:
+        return _read_json(os.path.join(DIRS["docs"], source_id + ".json"))
 
 
 def list_sources():

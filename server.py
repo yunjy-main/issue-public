@@ -136,7 +136,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"meta": meta, "content": body})
         elif path in ("/api/runs", "/api/run", "/api/run_status", "/api/source_text",
                       "/api/entities", "/api/relations", "/api/sources", "/api/stats",
-                      "/api/vocabulary", "/api/engines", "/api/history"):
+                      "/api/vocabulary", "/api/master", "/api/engines", "/api/history"):
             # 저장소 조회 예외를 격리 — 손상 파일 하나가 커넥션을 끊지 않도록 JSON 500
             try:
                 if path == "/api/run_status":
@@ -190,6 +190,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"stats": store.stats()})
                 elif path == "/api/vocabulary":
                     self._json({"vocabulary": store.load_vocab()})
+                elif path == "/api/master":   # 기준정보 — 사람이 만드는 좌표축
+                    full = store.get_master(include_deleted=True)
+                    self._json({"master": store.get_master(),
+                                "deleted": [x for k in ("nodes", "processes", "products", "projects")
+                                            for x in full[k] if x.get("state") == "deleted"]})
                 elif path == "/api/engines":
                     self._json(llm.describe_engines(store.load_vocab()))
                 elif path == "/api/history":
