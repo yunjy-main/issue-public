@@ -2347,11 +2347,11 @@ async function crudCommit(kind){
   if(!s||!s.plan){return;}
   const rv=s.reviews||{},rows=[];
   s.plan.forEach((p,i)=>{const row=crudApplyRow(kind,p,rv[i]);if(row)rows.push(row);});
-  if(!rows.length){toast("적용할 변경이 없습니다 — 모두 이미 등록/변경 없음. 값을 바꾸려면 항목을 edit하세요.");return;}
+  // skip만 있어 변경 0건이어도 COMMIT은 성립 — 데이터 변경은 없지만 리뷰(확정) 기록을 히스토리에 남긴다.
   const btn=document.querySelector('[data-crudcommit="'+kind+'"]');if(btn){btn.disabled=true;btn.innerHTML="확정 중…";}
   const step=kind==="mst"?"MASTER_SEED_APPLY":"ISSUE_CRUD_APPLY";
   try{
-    const r=(await apiPost({step,input:{apply:rows}})).result;
+    const r=rows.length?(await apiPost({step,input:{apply:rows}})).result:{n:0,failed:[]};
     const run={rid:genRid(kind),text:s.text||"",guide:s.guide||"",plan:s.plan,reviews:rv,
       n:r.n||0,failed:r.failed||[],committedAt:Date.now()};
     if(kind==="mst"){
@@ -2364,7 +2364,8 @@ async function crudCommit(kind){
       state.issNL=null;state.issPlan=null;saveIssNL();
       state.ents=null;await ensureIssueData(true);renderIssCard();
     }
-    let m="확정 "+run.n+"건";if(run.failed.length)m+=" · 실패 "+run.failed.length;toast(m);
+    let m=rows.length?("확정 "+run.n+"건"+(run.failed.length?" · 실패 "+run.failed.length:"")):"확정 — 변경 0건(모두 이미 등록/skip)";
+    toast(m);
   }catch(e){alert("확정 실패: "+(e.code?e.code+" ":"")+e.message);
     if(btn){btn.disabled=false;btn.innerHTML="확정<br>COMMIT";}}
 }
@@ -2376,7 +2377,8 @@ function crudRunBoxHtml(kind,run){
   const fail=(run.failed||[]).length?` · 실패 ${run.failed.length}`:"";
   const arw='<span class="sarw">›</span>';
   const stages=`<span class="stg ok">입력 ✓</span>${arw}<span class="stg ok">LLM 해석 ✓</span>${arw}<span class="stg ok">검토 ✓</span>${arw}<span class="stg ok">COMMIT ✓</span>`;
-  const body=`<div class="rb-meta">확정 완료 — <b>${run.n}건</b> 적용${fail} · <button class="rb-src-btn" data-crudsrc="${kind}:${escAttr(run.rid)}">📄 원문</button></div>
+  const applied=run.n?`<b>${run.n}건</b> 적용${fail}`:`변경 0건(모두 이미 등록/skip)`;
+  const body=`<div class="rb-meta">확정 완료 — ${applied} · <button class="rb-src-btn" data-crudsrc="${kind}:${escAttr(run.rid)}">📄 원문</button></div>
     <div class="run-raw">${run._srcOpen?crudSrcHtml(run):""}</div>
     <div class="rb-recap"><span class="rb-recap-tog" data-crudrecap="${kind}:${escAttr(run.rid)}">${run._recapOpen?'▾':'▸'} 커밋 당시 결정 (복기)</span>
       ${run._recapOpen?`<div class="rb-recap-body">${crudRecapHtml(kind,run)}</div>`:''}</div>`;
