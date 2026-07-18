@@ -121,7 +121,8 @@ def resolve(text, graph):
 # 꼬리는 영숫자 혼합 허용(N7X9·LN07LPP·N7GAE 처럼 숫자로 끝나거나 섞이는 실제 표기).
 _CAND = re.compile(
     r"(?<![A-Za-z0-9])([A-Za-z]{1,4}\d{1,3}[A-Za-z0-9]{0,8}|\d{1,2}\s*(?:nm|나노))(?![A-Za-z0-9])", re.I)
-_VER = re.compile(r"^[vV]\d")   # 'v2.1' 같은 버전 표기는 후보 아님(흔한 오탐)
+_VER = re.compile(r"^[vV]\d")           # 'v2.1' 버전 표기는 후보 아님
+_SEV = re.compile(r"^[Ss][1-4]$")       # S1~S4 심각도 코드는 좌표 후보 아님(흔한 오탐)
 
 
 def find_unknown_candidates(text, graph):
@@ -135,7 +136,7 @@ def find_unknown_candidates(text, graph):
         if _overlaps(span, taken):
             continue
         s = m.group(0).strip()
-        if _VER.match(s):
+        if _VER.match(s) or _SEV.match(s):
             continue
         k = re.sub(r"\s+", "", s).lower()
         if k in seen:

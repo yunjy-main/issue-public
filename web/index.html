@@ -267,11 +267,11 @@
   .rel-grid .r-mk{display:inline-block;width:9px;text-align:center}
   .rel-grid .mk-approx{color:var(--warn)}.rel-grid .mk-unc{color:var(--bad);font-weight:700}
   /* ---- 가이드 입력(본문과 UI상 분리, 전송 시 함께) ---- */
-  .guide-in{margin-top:5px;padding:5px 6px;border:1px dashed var(--border);border-radius:5px;background:var(--chip)}
+  .guide-in{margin-top:2px}
   .guide-h{font-size:9.5px;font-weight:700;color:var(--muted);margin-bottom:3px}
   .guide-h .dim{font-weight:400}
-  #runGuide{width:100%;min-height:30px;font-size:11.5px;padding:3px 5px;border:1px solid var(--border);
-    border-radius:4px;background:var(--bg);color:var(--fg);font-family:inherit;resize:vertical}
+  /* 가이드 textarea = 원문(.run-in textarea)과 동일 스타일, 높이만 낮게(상속 + min-height만 override) */
+  #runGuide{min-height:44px}
   /* ---- run-box 전처리·기준정보 게이트 ---- */
   .rb-pre{border:1px solid var(--border);border-radius:5px;padding:5px 7px;margin-bottom:5px;background:var(--bg)}
   .rb-pre-h{font-size:10px;font-weight:700;color:var(--muted);margin-bottom:3px}
@@ -285,6 +285,14 @@
   .rb-gate-row{font-size:10.5px;margin:2px 0}
   .rb-gate-row .mst-chip{background:var(--chip)}
   .rb-gate-acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
+  /* ---- 이슈 등록 폼 (좌표는 마스터 드롭다운) ---- */
+  .if-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .if-grid .if-wide{grid-column:1/-1}
+  .if-grid .edf>span{display:block;font-size:10px;color:var(--muted);margin-bottom:2px}
+  .if-grid input,.if-grid select,.if-grid textarea{width:100%;font-size:11.5px;padding:3px 5px;
+    border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-family:inherit}
+  .if-grid textarea{min-height:38px;resize:vertical}
+  @media(max-width:560px){.if-grid{grid-template-columns:1fr}}
   /* ---- 기준정보(마스터) 탭 ---- */
   .mst-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 0 8px;border-bottom:1px solid var(--border);margin-bottom:8px}
   .mst-bar b{font-size:12px}
@@ -625,11 +633,16 @@
   <section class="screen" id="scrKnow" hidden>
     <div class="tiles" id="knowTiles"></div>
     <div class="reconcile-bar">
+      <button class="btn primary" id="btnIssueNew">+ 이슈 등록</button>
+      <button class="btn" id="btnIssueNL">🗣 자연어 CRUD</button>
+      <span class="dim" style="flex:1;min-width:80px"></span>
       <button class="btn" id="btnReconcile">재조정 실행</button>
       <button class="btn" id="btnDedup">중복 병합</button>
       <button class="btn" id="btnRebuild" title="이벤트 로그로부터 projection 재생성 — 정합성 점검·복구(비파괴·멱등)">🔧 저장소 점검</button>
       <span id="reconcileMsg">재조정=잇기(링크) · 중복 병합=합치기(개수↓)</span>
     </div>
+    <div id="issueFormPanel"></div>
+    <div id="issueCrudPanel"></div>
     <div id="reconcilePanel"></div>
     <div id="dedupPanel"></div>
     <div class="issue-filter" id="issueFilter"></div>
@@ -1637,6 +1650,117 @@ function renderIssueList(){
     orphans.forEach(oid=>rows.push(issueRowHtml(byId[oid],0,false,false)));}
   $("#issueList").innerHTML=tableWrap(rows.join(""));
 }
+// ── 이슈 CRUD — 사람이 만드는 주제 컨테이너. 전통 폼 + 자연어(원문+가이드) ──
+// 좌표는 마스터가 진실 → 드롭다운으로만 선택(자유입력 금지). 이슈=사람 저작(LLM이 발명하지 않음).
+function coordSelect(kind,ko,cur){
+  const opts=mstByKind(kind).map(e=>`<option value="${escAttr(e.id)}"${cur===e.id?" selected":""}>${esc(e.id)}</option>`).join("");
+  return `<label class="edf"><span>${ko}</span><select data-if="${kind}"><option value="">—</option>${opts}</select></label>`;
+}
+function issueFormHtml(){
+  const S=(l,k,ph)=>`<label class="edf"><span>${l}</span><input data-if="${k}" placeholder="${ph||''}"></label>`;
+  const SEL=(l,k,opts)=>`<label class="edf"><span>${l}</span><select data-if="${k}"><option value="">—</option>`
+    +opts.map(o=>`<option>${esc(o)}</option>`).join("")+`</select></label>`;
+  const noMaster=!mstByKind("node").length&&!mstByKind("process").length&&!mstByKind("product").length;
+  return `<div class="seed-panel"><div class="seed-h">새 이슈 등록 <span class="dim">좌표는 기준정보(마스터)에서만 선택 — 없으면 기준정보 탭에서 먼저 등록</span></div>
+    ${noMaster?'<div class="plan-err">기준정보가 비어 있습니다 — 기준정보 탭에서 좌표(node/process/product/project)를 먼저 등록하세요. 좌표 없이도 제목만으로 등록은 가능합니다.</div>':''}
+    <div class="if-grid">
+      <label class="edf if-wide"><span>제목 <b class="req">*</b></span><input data-if="title" placeholder="예: GPIO-A HBM 2kV ESD 마진 부족"></label>
+      <label class="edf if-wide"><span>요약</span><textarea data-if="summary" placeholder="한두 줄 설명(선택)"></textarea></label>
+      ${coordSelect("node","node")}${coordSelect("process","process")}
+      ${coordSelect("product","product")}${coordSelect("project","project")}
+      ${SEL("상태","status",["정의","원인탐색","원인분석","원인발견","해결책탐색","재발방지","해결중","종결","보류","재발"])}
+      ${SEL("중요도","severity",["S1","S2","S3","S4"])}
+      ${S("시작일","start_date","YYYY-MM-DD")}${S("데드라인","deadline","YYYY-MM-DD")}
+    </div>
+    <div class="seed-ctl"><button class="btn primary" id="btnIssueSave">이슈 등록</button>
+      <button class="btn" id="btnIssueCancel">취소</button>
+      <span class="dim" id="issueFormMsg">좌표가 마스터에 없으면 등록이 막힙니다(기준정보 먼저).</span></div>
+  </div>`;
+}
+async function openIssueForm(){
+  await loadMaster(true);
+  const p=$("#issueFormPanel");
+  if(state.issueFormOpen){p.innerHTML="";state.issueFormOpen=false;return;}
+  $("#issueCrudPanel").innerHTML="";state.issueCrudOpen=false;
+  state.issueFormOpen=true;p.innerHTML=issueFormHtml();
+}
+async function createIssue(){
+  const f={};document.querySelectorAll('#issueFormPanel [data-if]').forEach(el=>{const v=el.value.trim();if(v)f[el.dataset.if]=v;});
+  if(!f.title){alert("제목은 필수입니다.");return;}
+  try{
+    const r=await apiPost({step:"ISSUE_CREATE",input:{fields:f}});
+    state.issueFormOpen=false;$("#issueFormPanel").innerHTML="";
+    state.ents=null;await ensureIssueData(true);
+    toast("이슈 등록됨: "+r.result.entity.id);location.hash="#e/"+r.result.entity.id;
+  }catch(e){
+    const el=$("#issueFormMsg");if(el){el.innerHTML=`<span class="err">${esc((e.code?e.code+" ":"")+e.message)}</span>`;}
+    else alert("등록 실패: "+e.message);
+  }
+}
+// ── 이슈 자연어 CRUD (원문+가이드 → LLM → 계획 → 적용). 마스터 CRUD와 같은 AX. ──
+async function openIssueNL(){
+  const p=$("#issueCrudPanel");
+  if(state.issueCrudOpen){p.innerHTML="";state.issueCrudOpen=false;return;}
+  $("#issueFormPanel").innerHTML="";state.issueFormOpen=false;
+  state.issueCrudOpen=true;
+  p.innerHTML=`<div class="seed-panel"><div class="seed-h">이슈 자연어 CRUD <span class="dim">원문(아무 형식)+가이드 → LLM 해석 → 계획 diff → 적용. 좌표는 마스터에서만.</span></div>
+    <textarea id="issNLText" spellcheck="false" placeholder='원문 붙여넣기 또는 자연어 지시:
+· "N7P GPIO-A 알파과제에 HBM ESD 마진 부족 이슈 만들어줘. 상태 원인탐색, S2."
+· "ISSUE-000012 종결 처리해줘."'></textarea>
+    <div class="guide-in" style="margin-top:5px"><div class="guide-h">가이드 <span class="dim">선택 — 해석 힌트</span></div>
+      <textarea id="issNLGuide" placeholder="예: 아래는 전부 N7P 알파과제 건입니다"></textarea></div>
+    <div class="seed-ctl"><button class="btn primary" id="btnIssPlan">계획 생성</button>
+      <span class="dim">LLM 해석 → 현재 이슈와 대조 → create/update/skip/delete 계획.</span></div>
+    <div id="issPlanPanel"></div></div>`;
+}
+async function issuePlan(){
+  const text=$("#issNLText").value, guide=$("#issNLGuide").value;
+  if(!text.trim()){alert("원문/지시를 입력하세요.");return;}
+  $("#issPlanPanel").innerHTML='<div class="ent-empty">LLM이 해석하는 중…</div>';
+  try{
+    const r=(await apiPost({step:"ISSUE_CRUD_PLAN",input:{text,guide:guide||undefined}})).result;
+    state.issPlan=r.plan||[];
+    const nm=(r.needs_master||[]).length,nu=(r.unresolved||[]).length;
+    let h=`<div class="plan-h">계획 ${state.issPlan.length}${nm?` · 기준정보 필요 ${nm}`:''}${nu?` · 미해소 ${nu}`:''}</div>`;
+    if(!state.issPlan.length&&!nm&&!nu)h+=`<div class="ent-empty">뽑아낸 이슈 없음</div>`;
+    if(state.issPlan.length){
+      h+=`<div class="plan-list">`+state.issPlan.map((p,i)=>{
+        const cls=p.op==="create"?"op-c":p.op==="update"?"op-u":p.op==="delete"?"op-d":"op-s";
+        const sign=p.op==="create"?"+":p.op==="update"?"~":p.op==="delete"?"−":"=";
+        let det="";
+        if(p.op==="create"){const c=p.coordinates||{};const co=["node","process","product","project"].map(k=>c[k]).filter(Boolean).join("/");
+          det=(co?co+" · ":"")+(p.status||"")+(p.severity?" "+p.severity:"");}
+        else if(p.op==="update"){const pt=p.patch||{};det=Object.keys(pt).map(k=>k+"="+pt[k]).join(" · ");}
+        else if(p.op==="delete")det="삭제";
+        else det=esc(p.warn||"변경 없음");
+        const label=p.op==="create"?(p.title||"(제목 없음)"):(p.id+(p.title?" "+p.title:""));
+        const chk=(p.op==="skip"||p.op==="delete"||p.warn)?'':'checked';
+        const dis=(p.op==="skip")?'disabled':'';
+        return `<label class="plan-row ${cls}"><input type="checkbox" data-issix="${i}" ${dis} ${chk}>
+          <span class="plan-sign">${sign}</span><span class="plan-op">${esc(p.op)}</span>
+          <b>${esc(label).slice(0,40)}</b><span class="plan-det">${esc(det)}</span>
+          ${p.confidence?`<span class="dim" style="font-size:9px">${esc(p.confidence)}</span>`:''}
+          ${p.warn?`<span class="plan-warn">⚠ ${esc(p.warn)}</span>`:''}</label>`;
+      }).join("")+`</div>
+      <div class="seed-ctl"><button class="btn primary" id="btnIssApply">선택 적용</button>
+        <span class="dim">삭제·경고 항목은 기본 미선택. 좌표 없는 create는 적용돼도 막힙니다.</span></div>`;
+    }
+    if(nm)h+=`<div class="plan-err">기준정보 먼저 등록 필요:<br>`+r.needs_master.map(u=>`· ${esc(u.surface||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
+    if(nu)h+=`<div class="plan-err">미해소:<br>`+r.unresolved.map(u=>`· ${esc(u.text||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
+    $("#issPlanPanel").innerHTML=h;
+  }catch(e){$("#issPlanPanel").innerHTML=`<div class="plan-err">계획 생성 실패: ${esc((e.code?e.code+" ":"")+e.message)}</div>`;}
+}
+async function issueApply(){
+  const picked=[];document.querySelectorAll('#issPlanPanel [data-issix]').forEach(cb=>{if(cb.checked)picked.push(state.issPlan[+cb.dataset.issix]);});
+  if(!picked.length){alert("적용할 항목을 선택하세요.");return;}
+  try{
+    const r=(await apiPost({step:"ISSUE_CRUD_APPLY",input:{apply:picked}})).result;
+    state.ents=null;await ensureIssueData(true);
+    let m="적용 "+r.n+"건";if((r.failed||[]).length)m+=" · 실패 "+r.failed.length;
+    toast(m);$("#issueCrudPanel").innerHTML="";state.issueCrudOpen=false;
+  }catch(e){alert("적용 실패: "+(e.code?e.code+" ":"")+e.message);}
+}
+
 // ── 기준정보(마스터) 관리 — 사람이 만드는 좌표축. 전통 CRUD + 정형 시드(결정론 파싱) ──
 // 자연어 CRUD는 **별도 독립 flow**로 붙는다(같은 저장 경로 MASTER_UPSERT를 재사용).
 const MST_LABEL={node:"node",process:"process",product:"product",project:"project"};
@@ -2235,6 +2359,13 @@ document.addEventListener("click",e=>{
   const gign=e.target.closest("[data-gateign]");
   if(gign){gateIgnore(gign.dataset.gateign);return;}
   if(e.target.closest("[data-gatemst]")){location.hash="#mst";return;}
+  // ── 이슈 CRUD (이슈 탭) ──
+  if(e.target.id==="btnIssueNew"){openIssueForm();return;}
+  if(e.target.id==="btnIssueNL"){openIssueNL();return;}
+  if(e.target.id==="btnIssueSave"){createIssue();return;}
+  if(e.target.id==="btnIssueCancel"){state.issueFormOpen=false;$("#issueFormPanel").innerHTML="";return;}
+  if(e.target.id==="btnIssPlan"){issuePlan();return;}
+  if(e.target.id==="btnIssApply"){issueApply();return;}
   // ── 기준정보 탭 ──
   if(e.target.id==="btnMstSeed"){const p=$("#mstSeedPanel");p.hidden=!p.hidden;return;}
   if(e.target.id==="btnMstPlan"){mstPlan();return;}

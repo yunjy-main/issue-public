@@ -884,6 +884,119 @@ def master_crud_plan(text, guide=None, master=None, cfg=None):
     return out
 
 
+# ---------- 이슈 CRUD — 원문+가이드 해석 (독립 flow, 추출과 분리) ----------
+_ISSUE_CRUD_SCHEMA = {
+    "type": "object", "required": ["items"],
+    "properties": {
+        "items": {"type": "array", "items": {
+            "type": "object", "required": ["op"],
+            "properties": {
+                "op": {"enum": ["create", "update", "delete"]},
+                "id": {"type": "string"}, "title": {"type": "string"}, "summary": {"type": "string"},
+                "coordinates": {"type": "object", "properties": {
+                    "node": {"type": "string"}, "process": {"type": "string"},
+                    "product": {"type": "string"}, "project": {"type": "string"}}},
+                "status": {"type": "string"}, "severity": {"type": "string"},
+                "start_date": {"type": "string"}, "deadline": {"type": "string"},
+                "evidence": {"type": "string"}, "confidence": {"enum": ["low", "medium", "high"]}}}},
+        "needs_master": {"type": "array", "items": {
+            "type": "object", "properties": {"surface": {"type": "string"}, "why": {"type": "string"}}}},
+        "unresolved": {"type": "array", "items": {
+            "type": "object", "properties": {"text": {"type": "string"}, "why": {"type": "string"}}}},
+    }}
+
+
+def _issue_context(issues):
+    """등록된 이슈를 프롬프트용 압축 목록으로 — update/delete 대상은 이 id에서만(환각 차단)."""
+    lines = []
+    for e in issues or []:
+        coord = "/".join(x for x in (e.get("node"), e.get("process"), e.get("product"),
+                                     e.get("project")) if x)
+        lines.append("- %s | %s | %s%s" % (e.get("id"), (e.get("title") or "")[:50],
+                     coord or "좌표없음", (" | " + e.get("status")) if e.get("status") else ""))
+    return "\n".join(lines) if lines else "(등록된 이슈 없음)"
+
+
+def issue_crud_plan(text, guide=None, issues=None, master=None, cfg=None):
+    """원문+가이드 → 이슈 항목 해석. **LLM은 해석만**, 대조·계획·적용은 결정론(pipeline/store).
+    반환 {items, needs_master, unresolved}. 추출 파이프라인과 분리된 독립 flow."""
+    cfg = cfg or load_llm_config()
+    if cfg.get("mode", "stub") != "http":
+        raise LLMError("E-2009", "이슈 자연어 CRUD는 mode:http에서만 동작합니다 (현재 mode=%s)" % cfg.get("mode", "stub"))
+    system = (_prompt_file("issue_crud.md")
+              + "\n\n[등록된 마스터]\n" + _master_context(master)
+              + "\n\n[등록된 이슈]\n" + _issue_context(issues))
+    user = "[가이드]\n" + ((guide or "").strip() or "없음") + "\n\n[원문]\n" + (text or "")
+    payload = {"model": cfg.get("model", "internal"),
+               "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    if cfg.get("response_schema"):
+        payload["response_format"] = {"type": "json_schema",
+                                      "json_schema": {"name": "issue_crud", "schema": _ISSUE_CRUD_SCHEMA}}
+    payload.update(cfg.get("extra_payload", {}))
+    headers = {"Content-Type": "application/json", **cfg.get("headers", {})}
+    data = json.dumps(payload).encode("utf-8")
+    url, timeout = cfg.get("url"), cfg.get("timeout", 60)
+    if not url:
+        raise LLMError("E-2004", "llm.json에 url 미설정")
+    import urllib.request
+    import urllib.error
+    _log_llm_request("ISSUE_CRUD", url, headers, data, cfg)
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers),
+                                    timeout=timeout) as r:
+            raw = r.read().decode("utf-8")
+            _log_llm_response("ISSUE_CRUD", getattr(r, "status", "?"), time.time() - t0, raw, cfg)
+            resp = json.loads(raw)
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", "replace")
+        except Exception:  # noqa
+            pass
+        _log_llm_error("ISSUE_CRUD", url, time.time() - t0, e, "HTTP %s · %s" % (e.code, body[:500]))
+        raise LLMError("E-2001", "LLM HTTP %s: %s" % (e.code, body[:220]))
+    except Exception as e:  # noqa
+        _log_llm_error("ISSUE_CRUD", url, time.time() - t0, e, "timeout=%ss" % timeout)
+        raise LLMError("E-2001", "LLM 호출 실패(%s, %.1fs, %s): %s"
+                       % (type(e).__name__, time.time() - t0, url, e))
+    try:
+        content = resp["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise LLMError("E-2002", "LLM 응답 형식 예상 밖")
+    obj = _lenient_json_obj(content)
+    if obj is None:
+        raise LLMError("E-2002", "LLM 응답에서 JSON을 찾지 못함")
+    _S = {"정의", "원인탐색", "원인분석", "원인발견", "해결책탐색", "재발방지", "해결중", "종결", "보류", "재발"}
+    out = {"items": [], "needs_master": [], "unresolved": []}
+    for it in (obj.get("items") or []):
+        if not isinstance(it, dict) or it.get("op") not in ("create", "update", "delete"):
+            continue
+        row = {"op": it["op"]}
+        if it.get("id"):
+            row["id"] = str(it["id"]).strip()
+        for k in ("title", "summary", "start_date", "deadline", "evidence"):
+            if it.get(k):
+                row[k] = str(it[k]).strip()
+        if it.get("status") in _S:
+            row["status"] = it["status"]
+        if it.get("severity") in ("S1", "S2", "S3", "S4"):
+            row["severity"] = it["severity"]
+        c = it.get("coordinates") or {}
+        row["coordinates"] = {k: (str(c[k]).strip() if c.get(k) else None)
+                              for k in ("node", "process", "product", "project")}
+        if it.get("confidence"):
+            row["confidence"] = it["confidence"]
+        out["items"].append(row)
+    for u in (obj.get("needs_master") or []):
+        if isinstance(u, dict):
+            out["needs_master"].append({"surface": u.get("surface"), "why": u.get("why")})
+    for u in (obj.get("unresolved") or []):
+        if isinstance(u, dict):
+            out["unresolved"].append({"text": u.get("text"), "why": u.get("why")})
+    return out
+
+
 # ---------- 자연어 작업 명령 감지 (전용 focused 경로 — 약한 LLM에도 견고) ----------
 _CMD_MARKERS = ("삭제", "지워", "지우", "없애", "없앤", "제거해", "제거하", "빼줘", "빼주",
                 "숨겨", "숨김", "숨기", "안 보이", "목록에서 빼", "잘못 등록", "오입력", "삭제해")

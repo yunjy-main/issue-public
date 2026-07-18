@@ -94,9 +94,26 @@ def merge_severity(a, b):
 # 후처리 편집 허용 필드 (그 외는 보호: id·state·revision·source_refs·captured_at·produced_by·merged_into).
 # type은 경고 후 허용(프론트 경고) — 여기 포함하되 UI에서 확인.
 # type은 일반 편집이 아니라 재분류(reclassify_entity)로 — ID 접두사 교정 + 관계 이관.
-EDITABLE_FIELDS = ("title", "summary", "process", "product", "project",
+EDITABLE_FIELDS = ("title", "summary", "node", "process", "product", "project",
                    "start_date", "deadline", "occurred_at", "date_confidence",
                    "date_note", "tags", "status", "severity", "closed_at")
+
+
+def create_entity(etype, fields, actor="human"):
+    """사람이 직접 엔티티(주로 issue)를 생성 — id 발급 + 화이트리스트 필드만 + human 출처.
+    LLM 추출(EXTRACT/COMMIT)이 아니라 **사람 저작** 경로. 좌표 검증은 호출측(pipeline)이 마스터로 한다."""
+    with _LOCK:
+        eid = next_id(etype.upper())
+        now = now_iso()
+        e = {"id": eid, "type": etype, "state": "active",
+             "captured_at": now, "first_captured_at": now, "source_refs": [],
+             "produced_by": {"type": "human", "name": actor, "version": "manual"}}
+        for k, v in (fields or {}).items():
+            if k in EDITABLE_FIELDS and v not in (None, ""):
+                e[k] = v
+        e = upsert_entity(e, actor)   # revision=1
+        append_event({"event": "review.create", "entity_id": eid, "actor": actor, "via": "manual"})
+        return e
 
 
 def reclassify_entity(old_id, new_type, actor="human"):

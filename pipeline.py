@@ -35,6 +35,34 @@ _MASTER_ERR = {
 }
 
 
+def _coord_missing(coords):
+    """이슈 좌표 {node,process,product,project} 중 **마스터에 없는** 것 목록(빈 값 무시).
+    좌표는 마스터가 진실 — 이슈는 마스터에 있는 좌표에만 붙는다(없으면 기준정보 먼저)."""
+    g = store.get_master()
+    miss = []
+    for kind in ("node", "process", "product", "project"):
+        v = (coords or {}).get(kind)
+        if v and not store.master_find(g, v, kind):
+            miss.append({"kind": kind, "id": v})
+    return miss
+
+
+def _miss_msg(miss):
+    return "마스터에 없는 좌표: " + ", ".join("%s=%s" % (m["kind"], m["id"]) for m in miss)
+
+
+def _resolve_coords_det(item):
+    """LLM이 준 좌표 표기(별칭일 수 있음)+evidence+title을 **결정론 리졸버로 정준화**한다.
+    LLM은 '무엇이 이슈인가'만 해석하고, 좌표 표면형→정준 id 해소는 master.resolve가 한다
+    (예: LLM이 'N7+'라 해도 → process=N7P + node 승격). 추출 좌표와 동일 규칙이라 일관적."""
+    import master as mm
+    g = store.get_master()
+    c = item.get("coordinates") or {}
+    txt = " ".join(str(x) for x in [c.get("node"), c.get("process"), c.get("product"),
+                                    c.get("project"), item.get("evidence"), item.get("title")] if x)
+    return mm.resolve(txt, g)["coordinates"]
+
+
 def _coerce_enums(obj, tid, warnings):
     """status/severity가 유효 enum이 아니면 조용히 이월하지 않고 제거+경고(E-3004). 엔티티는 유지.
     accept/edit(obj)와 merge(후보 e) 양 경로에 동일 적용(게이트 비대칭 방지)."""
@@ -751,6 +779,109 @@ def handle_step(body):
         blocked = any(x["conflicts"] or x["guide_conflicts"] for x in out) or bool(cands)
         return ok({"docs": out, "unknown_candidates": cands, "needs_review": blocked},
                   ["MASTER_UPSERT", "MASTER_SEED_PLAN", "EXTRACT", "STOP"])
+
+    # ---------- 이슈 CRUD — 사람이 만드는 주제 컨테이너 (전통 폼 + 자연어) ----------
+    if step == "ISSUE_CREATE":   # 전통 폼: 사람이 이슈 등록 (좌표는 마스터에서만)
+        f = dict(inp.get("fields") or {})
+        if not (f.get("title") or "").strip():
+            raise StepError("E-4401", "제목(title)은 필수입니다", 422)
+        miss = _coord_missing({k: f.get(k) for k in ("node", "process", "product", "project")})
+        if miss and not inp.get("allow_missing"):
+            raise StepError("E-4402", _miss_msg(miss) + " — 기준정보 탭에서 먼저 등록하세요", 409)
+        e = store.create_entity("issue", f, inp.get("actor", "human"))
+        return ok({"entity": e}, ["ISSUE_CREATE", "ENTITY_EDIT", "STOP"])
+
+    if step == "ISSUE_CRUD_PLAN":   # 자연어: 원문+가이드 → LLM 해석 → 결정론 대조 계획
+        text = inp.get("text") or ""
+        if not text.strip():
+            raise StepError("E-1001", "원문이 비었습니다", 400)
+        issues = [e for e in store.list_entities() if e.get("type") == "issue"]
+        try:
+            res = llm.issue_crud_plan(text, inp.get("guide"), issues, store.get_master())
+        except llm.LLMError as e:
+            raise StepError(e.code, str(e), 502)
+        import master as master_mod
+        mg = store.get_master()
+        text_coords = master_mod.resolve(text, mg)["coordinates"]   # 입력 원문의 결정론 좌표(별칭→정준·승격)
+        by_id = {e["id"].lower(): e for e in issues}
+        plan = []
+        for it in res["items"]:
+            op = it.get("op")
+            if op == "create":
+                coords = _resolve_coords_det(it)   # item(evidence/title) 결정론 해소
+                for k in ("node", "process", "product", "project"):   # 빠진 건 원문 전체 해소로 보완
+                    if not coords.get(k):
+                        coords[k] = text_coords.get(k)
+                row = {"op": "create", "title": it.get("title"), "summary": it.get("summary"),
+                       "coordinates": coords, "status": it.get("status"), "severity": it.get("severity"),
+                       "start_date": it.get("start_date"), "deadline": it.get("deadline"),
+                       "evidence": it.get("evidence"), "confidence": it.get("confidence")}
+                miss = _coord_missing(coords)
+                if not (it.get("title") or "").strip():
+                    row["warn"] = "제목 없음"
+                elif miss:
+                    row["warn"] = _miss_msg(miss)
+                plan.append(row)
+            elif op in ("update", "delete"):
+                tgt = by_id.get(str(it.get("id", "")).lower())
+                row = {"op": op, "id": it.get("id"), "evidence": it.get("evidence"),
+                       "confidence": it.get("confidence")}
+                if not tgt:
+                    row["op"] = "skip"; row["warn"] = "등록된 이슈 아님 — 건너뜀"
+                elif op == "update":
+                    patch = {}
+                    for k in ("title", "summary", "status", "severity", "start_date", "deadline"):
+                        if it.get(k) and it.get(k) != tgt.get(k):
+                            patch[k] = it[k]
+                    rc = _resolve_coords_det(it)   # 좌표 변경도 결정론 해소
+                    for k in ("node", "process", "product", "project"):
+                        if rc.get(k) and rc.get(k) != tgt.get(k):
+                            patch[k] = rc[k]
+                    row["patch"] = patch; row["title"] = tgt.get("title")
+                    miss = _coord_missing({k: patch.get(k) for k in ("node", "process", "product", "project")})
+                    if not patch:
+                        row["op"] = "skip"; row["warn"] = "변경 없음"
+                    elif miss:
+                        row["warn"] = _miss_msg(miss)
+                else:   # delete
+                    row["title"] = tgt.get("title")
+                plan.append(row)
+        # needs_master는 **결정론**으로(LLM 판단은 비일관): 원문에서 좌표처럼 보이나 마스터에 없는 토큰.
+        # (추출 게이트와 동일 방식 — 좌표 해소·미등록 판정은 LLM이 아니라 리졸버의 일)
+        nm = [{"surface": c["surface"], "why": "마스터에 없음 — 기준정보 먼저 등록"}
+              for c in master_mod.find_unknown_candidates(text, mg)]
+        return ok({"plan": plan, "needs_master": nm,
+                   "unresolved": res.get("unresolved") or []}, ["ISSUE_CRUD_APPLY", "STOP"])
+
+    if step == "ISSUE_CRUD_APPLY":   # 사람이 고른 계획만 적용 → 전통 create/edit/trash 저장 경로
+        actor = inp.get("actor", "human")
+        applied, failed = [], []
+        for row in (inp.get("apply") or []):
+            op = row.get("op")
+            if op == "skip":
+                continue
+            try:
+                if op == "create":
+                    coords = row.get("coordinates") or {}
+                    if _coord_missing(coords):
+                        failed.append({"op": op, "title": row.get("title"), "error": "E-4402"}); continue
+                    f = dict(coords)
+                    for k in ("title", "summary", "status", "severity", "start_date", "deadline"):
+                        if row.get(k):
+                            f[k] = row[k]
+                    e = store.create_entity("issue", f, actor)
+                    applied.append({"op": op, "id": e["id"]})
+                elif op == "update":
+                    ent, _rej = store.edit_entity(row.get("id"), row.get("patch") or {}, actor)
+                    (applied if ent else failed).append(
+                        {"op": op, "id": row.get("id")} if ent else {"op": op, "id": row.get("id"), "error": "E-1002"})
+                elif op == "delete":
+                    res = store.trash_entity(row.get("id"), actor)
+                    (applied if res else failed).append(
+                        {"op": op, "id": row.get("id")} if res else {"op": op, "id": row.get("id"), "error": "E-1002"})
+            except Exception as ex:   # noqa
+                failed.append({"op": op, "id": row.get("id"), "error": type(ex).__name__})
+        return ok({"applied": applied, "failed": failed, "n": len(applied)}, ["VIEW_BUILD", "STOP"])
 
     if step == "VIEW_BUILD":
         return ok({"stats": store.stats()}, ["CAPTURE", "STOP"])
