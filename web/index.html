@@ -1925,10 +1925,15 @@ function crudCardHtml(cfg){
     :hasPlan?'<span class="stg ok">LLM 해석 ✓</span>':'<span class="stg wait">LLM 해석</span>';
   const revStg=err?'':`${arw}<span class="stg wait">검토·적용${hasPlan?' 대기':''}</span>`;
   const stages=`<span class="stg ok">입력 ✓</span>${arw}${llmStg}${revStg}`;
-  let body;
-  if(running)body=`<div class="rb-run">LLM이 해석하는 중… <span class="rb-timer" data-timer>${sec}초</span> <span style="color:var(--muted)">(진행중 — 새로고침·이동해도 유지)</span></div>`;
-  else if(err)body=`<div class="rb-err">계획 생성 실패: ${esc(err)}</div>`;
-  else body=cfg.planInner||'<div class="ent-empty">계획 없음</div>';
+  let inner;
+  if(running)inner=`<div class="rb-run">LLM이 해석하는 중… <span class="rb-timer" data-timer>${sec}초</span> <span style="color:var(--muted)">(진행중 — 새로고침·이동해도 유지)</span></div>`;
+  else if(err)inner=`<div class="rb-err">계획 생성 실패: ${esc(err)}</div>`;
+  else inner=cfg.planInner||'<div class="ent-empty">계획 없음</div>';
+  // 라이브 카드에도 원문·재검토를 항상 노출(해석중·검토대기·실패 무관). 원문은 제출한 s.text/guide.
+  const acts=cfg.kind?`<div class="rb-meta"><button class="rb-src-btn" data-crudlivesrc="${cfg.kind}">📄 원문</button>`
+      +` · <button class="rb-src-btn" data-crudrerun="${cfg.kind}">🔄 재검토</button></div>`
+      +`<div class="run-raw">${s._srcOpen?crudSrcHtml(s):""}</div>`:'';
+  const body=acts+inner;
   const del=cfg.kind?`<button class="rb-del" data-crudclear="${cfg.kind}" title="계획 지우기">×</button>`:'';
   return `<div class="run-box crud-card">
     <div class="rb-top"><span class="rb-id">${esc(cfg.label)}</span><span class="rb-src">${snip}</span>${badge}${del}</div>
@@ -1993,7 +1998,7 @@ async function runIssJob(){
   if(!state.issNL||state.issNL.jobId!==jobId)return;   // 그 사이 새 계획으로 대체됨 → 무시
   if(j.state==="done"){
     const r=j.result||{};
-    state.issNL={open:true,text:s.text,guide:s.guide,plan:r.plan||[],error:null,needs_master:r.needs_master||[],unresolved:r.unresolved||[]};
+    state.issNL={open:true,text:s.text,guide:s.guide,_srcOpen:s._srcOpen,plan:r.plan||[],error:null,needs_master:r.needs_master||[],unresolved:r.unresolved||[]};
     state.issPlan=state.issNL.plan;saveIssNL();
   }else{
     state.issNL.running=false;state.issNL.error=(j.code?j.code+" ":"")+(j.error||"오류");saveIssNL();
@@ -2233,7 +2238,7 @@ async function runMstJob(){
   if(!state.mst||state.mst.jobId!==jobId)return;
   if(j.state==="done"){
     const r=j.result||{};
-    state.mst={open:true,text:s.text,guide:s.guide,plan:r.plan||[],error:null,items:r.items||[],unresolved:r.unresolved||[]};
+    state.mst={open:true,text:s.text,guide:s.guide,_srcOpen:s._srcOpen,plan:r.plan||[],error:null,items:r.items||[],unresolved:r.unresolved||[]};
     state.mstPlan=state.mst.plan;saveMstNL();
   }else{
     state.mst.running=false;state.mst.error=(j.code?j.code+" ":"")+(j.error||"오류");saveMstNL();
@@ -2435,6 +2440,13 @@ function toggleCrudRecap(kind,rid){const runs=kind==="mst"?state.mstRuns:state.i
 function crudDelRun(kind,rid){const key=kind==="mst"?"mstRuns":"issRuns";
   state[key]=(state[key]||[]).filter(x=>x.rid!==rid);saveCrudRuns(kind);
   (kind==="mst"?renderMstCard:renderIssCard)();}
+// 라이브 카드(해석중·검토대기·실패)에서 제출한 원문 보기 토글
+function toggleCrudLiveSrc(kind){const s=kind==="mst"?state.mst:state.issNL;if(!s)return;
+  s._srcOpen=!s._srcOpen;(kind==="mst"?saveMstNL:saveIssNL)();(kind==="mst"?renderMstCard:renderIssCard)();}
+// 재검토 — 제출했던 원문·가이드로 계획을 다시 생성(빈 계획·오해석 때). 입력창에 되채운 뒤 재실행.
+function crudRerun(kind){const s=kind==="mst"?state.mst:state.issNL;if(!s)return;
+  if(kind==="mst"){if($("#mstSeedText"))$("#mstSeedText").value=s.text||"";if($("#mstGuide"))$("#mstGuide").value=s.guide||"";mstPlan();}
+  else{if($("#issNLText"))$("#issNLText").value=s.text||"";if($("#issNLGuide"))$("#issNLGuide").value=s.guide||"";issuePlan();}}
 
 // ── 관계 편집기(상세페이지) — 사람이 직접 이슈 계층/관계를 만들고 해제 ──
 function relAddHtml(e){
@@ -2830,6 +2842,10 @@ document.addEventListener("click",e=>{
   if(cclr){const kind=cclr.dataset.crudclear;
     if(kind==="mst"){state.mst=null;state.mstPlan=null;saveMstNL();if($("#mstSeedText"))$("#mstSeedText").value="";if($("#mstGuide"))$("#mstGuide").value="";renderMstCard();}
     else{state.issNL=null;state.issPlan=null;saveIssNL();renderIssCard();}return;}
+  const clsrc=e.target.closest("[data-crudlivesrc]");
+  if(clsrc){toggleCrudLiveSrc(clsrc.dataset.crudlivesrc);return;}
+  const crr=e.target.closest("[data-crudrerun]");
+  if(crr){crudRerun(crr.dataset.crudrerun);return;}
   const csrc=e.target.closest("[data-crudsrc]");
   if(csrc){const a=csrc.dataset.crudsrc.split(":");toggleCrudSrc(a[0],a.slice(1).join(":"));return;}
   const crcp=e.target.closest("[data-crudrecap]");
