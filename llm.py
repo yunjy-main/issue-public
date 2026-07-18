@@ -997,6 +997,130 @@ def issue_crud_plan(text, guide=None, issues=None, master=None, cfg=None):
     return out
 
 
+# ---------- 사건 추출 + 이슈 매핑 (모델 전환의 가운데 조각) ----------
+def _http_json(tag, system, user, schema, cfg):
+    """공용 http JSON 호출 — 로깅·관대 파서 포함. 반환 dict|None(파싱실패). mode:http 전제."""
+    payload = {"model": cfg.get("model", "internal"),
+               "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    if cfg.get("response_schema") and schema:
+        payload["response_format"] = {"type": "json_schema",
+                                      "json_schema": {"name": tag.lower(), "schema": schema}}
+    payload.update(cfg.get("extra_payload", {}))
+    headers = {"Content-Type": "application/json", **cfg.get("headers", {})}
+    data = json.dumps(payload).encode("utf-8")
+    url, timeout = cfg.get("url"), cfg.get("timeout", 60)
+    if not url:
+        raise LLMError("E-2004", "llm.json에 url 미설정")
+    import urllib.request
+    import urllib.error
+    _log_llm_request(tag, url, headers, data, cfg)
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers),
+                                    timeout=timeout) as r:
+            raw = r.read().decode("utf-8")
+            _log_llm_response(tag, getattr(r, "status", "?"), time.time() - t0, raw, cfg)
+            resp = json.loads(raw)
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", "replace")
+        except Exception:  # noqa
+            pass
+        _log_llm_error(tag, url, time.time() - t0, e, "HTTP %s · %s" % (e.code, body[:500]))
+        raise LLMError("E-2001", "LLM HTTP %s: %s" % (e.code, body[:220]))
+    except Exception as e:  # noqa
+        _log_llm_error(tag, url, time.time() - t0, e, "timeout=%ss" % timeout)
+        raise LLMError("E-2001", "LLM 호출 실패(%s, %.1fs, %s): %s"
+                       % (type(e).__name__, time.time() - t0, url, e))
+    try:
+        content = resp["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise LLMError("E-2002", "LLM 응답 형식 예상 밖")
+    return _lenient_json_obj(content)
+
+
+_EVENT_SCHEMA = {"type": "object", "required": ["events"], "properties": {"events": {"type": "array",
+    "items": {"type": "object", "required": ["what", "kind"], "properties": {
+        "temp_id": {"type": "string"}, "what": {"type": "string"},
+        "kind": {"enum": ["관찰", "실패", "원인", "조치", "결정", "요청", "공지"]},
+        "occurred_at": {"type": "string"}, "date_confidence": {"enum": ["exact", "approximate", "uncertain"]},
+        "who": {"type": "string"}, "evidence": {"type": "string"},
+        "confidence": {"enum": ["low", "medium", "high"]}}}}}}
+_EVENT_KINDS = {"관찰", "실패", "원인", "조치", "결정", "요청", "공지"}
+
+
+def extract_events(text, coords=None, ref_time=None, guide=None, cfg=None):
+    """확정 좌표 하에서 원문의 '사건'만 추출한다(이슈 만들지 않음). 반환 events[]. mode:http 전용."""
+    cfg = cfg or load_llm_config()
+    if cfg.get("mode", "stub") != "http":
+        raise LLMError("E-2009", "사건 추출은 mode:http에서만 (현재 mode=%s)" % cfg.get("mode", "stub"))
+    cd = " / ".join("%s=%s" % (k, (coords or {}).get(k)) for k in ("node", "process", "product", "project")
+                    if (coords or {}).get(k)) or "(미확정)"
+    system = (_prompt_file("event_extract.md") + "\n\n[확정 좌표]\n" + cd
+              + "\n[기준 시각]\n" + (ref_time or "(미상)")
+              + ("\n[가이드]\n" + guide.strip() if (guide or "").strip() else ""))
+    obj = _http_json("EVENT_EXTRACT", system, "[원문]\n" + (text or ""), _EVENT_SCHEMA, cfg)
+    if obj is None:
+        raise LLMError("E-2002", "사건 추출 응답에서 JSON을 찾지 못함")
+    out, seen = [], set()
+    for i, ev in enumerate(obj.get("events") or [], 1):
+        if not isinstance(ev, dict) or not (ev.get("what") or "").strip():
+            continue
+        w = ev["what"].strip()
+        key = re.sub(r"\s+", " ", w).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"temp_id": ev.get("temp_id") or ("ev%d" % i), "what": w,
+                    "kind": ev["kind"] if ev.get("kind") in _EVENT_KINDS else "관찰",
+                    "occurred_at": ev.get("occurred_at"), "date_confidence": ev.get("date_confidence"),
+                    "who": ev.get("who"), "evidence": ev.get("evidence"),
+                    "confidence": ev.get("confidence") or "medium"})
+    return out
+
+
+_MAP_SCHEMA = {"type": "object", "properties": {
+    "links": {"type": "array", "items": {"type": "object", "required": ["event", "issue"], "properties": {
+        "event": {"type": "string"}, "issue": {"type": "string"},
+        "rationale": {"type": "string"}, "confidence": {"enum": ["low", "medium", "high"]}}}},
+    "unmapped": {"type": "array", "items": {"type": "object", "properties": {
+        "event": {"type": "string"}, "why": {"type": "string"}}}},
+    "issue_proposals": {"type": "array", "items": {"type": "object", "properties": {
+        "title": {"type": "string"}, "coordinates": {"type": "object"},
+        "from_events": {"type": "array", "items": {"type": "string"}}}}}}}
+
+
+def map_events(events, issues, cfg=None):
+    """사건을 사람이 등록한 이슈에 연결 제안. 이슈 만들지 않음. 반환 {links, unmapped, issue_proposals}.
+    issues는 **좌표로 사전 필터한 후보**를 넘긴다(환각·범위 축소). mode:http 전용."""
+    cfg = cfg or load_llm_config()
+    if cfg.get("mode", "stub") != "http":
+        raise LLMError("E-2009", "이슈 매핑은 mode:http에서만 (현재 mode=%s)" % cfg.get("mode", "stub"))
+    ilist = "\n".join("- %s | %s | %s | %s" % (
+        e.get("id"), "/".join(x for x in (e.get("node"), e.get("process"), e.get("product"),
+                                          e.get("project")) if x) or "좌표없음",
+        (e.get("title") or "")[:50], e.get("status") or "") for e in issues or []) or "(후보 이슈 없음)"
+    elist = "\n".join("- %s: [%s] %s" % (ev.get("temp_id"), ev.get("kind"), ev.get("what"))
+                      for ev in events or [])
+    system = _prompt_file("issue_map.md") + "\n\n[등록된 이슈]\n" + ilist
+    obj = _http_json("ISSUE_MAP", system, "[사건들]\n" + elist, _MAP_SCHEMA, cfg)
+    if obj is None:
+        raise LLMError("E-2002", "이슈 매핑 응답에서 JSON을 찾지 못함")
+    valid_ev = {ev.get("temp_id") for ev in events or []}
+    valid_is = {e.get("id") for e in issues or []}
+    links = [{"event": l.get("event"), "issue": l.get("issue"), "rationale": l.get("rationale"),
+              "confidence": l.get("confidence") or "medium"}
+             for l in (obj.get("links") or [])
+             if isinstance(l, dict) and l.get("event") in valid_ev and l.get("issue") in valid_is]
+    unmapped = [{"event": u.get("event"), "why": u.get("why")}
+                for u in (obj.get("unmapped") or []) if isinstance(u, dict)]
+    props = [{"title": p.get("title"), "coordinates": p.get("coordinates") or {},
+              "from_events": p.get("from_events") or []}
+             for p in (obj.get("issue_proposals") or []) if isinstance(p, dict) and p.get("title")]
+    return {"links": links, "unmapped": unmapped, "issue_proposals": props}
+
+
 # ---------- 자연어 작업 명령 감지 (전용 focused 경로 — 약한 LLM에도 견고) ----------
 _CMD_MARKERS = ("삭제", "지워", "지우", "없애", "없앤", "제거해", "제거하", "빼줘", "빼주",
                 "숨겨", "숨김", "숨기", "안 보이", "목록에서 빼", "잘못 등록", "오입력", "삭제해")

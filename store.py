@@ -116,6 +116,29 @@ def create_entity(etype, fields, actor="human"):
         return e
 
 
+_EVENT_FIELDS = ("title", "summary", "kind", "who", "occurred_at", "date_confidence",
+                 "node", "process", "product", "project", "evidence")
+
+
+def create_event(fields, actor="human"):
+    """사건(event) 엔티티 생성 — type=event, 기계 산출물(사람이 검토·확정 후 커밋). 이슈에 붙는 증거·경과.
+    좌표는 EVENT_EXTRACT가 확정 좌표에서 스탬프한 값을 그대로 받는다(마스터 검증은 좌표 해소 시점에)."""
+    with _LOCK:
+        eid = next_id("EVENT")
+        now = now_iso()
+        e = {"id": eid, "type": "event", "state": "active",
+             "captured_at": now, "first_captured_at": now,
+             "source_refs": list(fields.get("source_refs") or []),
+             "produced_by": {"type": "llm", "name": "event-extract", "version": "0.1"}}
+        for k in _EVENT_FIELDS:
+            v = fields.get(k)
+            if v not in (None, "", []):
+                e[k] = v
+        e = upsert_entity(e, actor)
+        append_event({"event": "review.create", "entity_id": eid, "actor": actor, "via": "event"})
+        return e
+
+
 def reclassify_entity(old_id, new_type, actor="human"):
     """유형 재분류 — 새 접두사 ID를 발급해 필드 이관, 관계를 새 ID로 재지정, 옛것 소프트삭제.
     ID가 유형을 거짓말하지 않게 한다(FINDING-이 사실은 issue인 문제 해결). 반환: 새 엔티티 or None."""

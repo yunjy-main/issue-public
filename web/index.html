@@ -266,6 +266,26 @@
   .rel-grid .r-occ,.rel-grid .r-cap{font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
   .rel-grid .r-mk{display:inline-block;width:9px;text-align:center}
   .rel-grid .mk-approx{color:var(--warn)}.rel-grid .mk-unc{color:var(--bad);font-weight:700}
+  /* ---- 사건 검토(게이트2) ---- */
+  .ev-list{display:flex;flex-direction:column;gap:5px;margin:2px 0}
+  .ev-row{border:1px solid var(--border);border-radius:5px;padding:5px 7px;background:var(--bg)}
+  .ev-row.ev-rej{opacity:.45}
+  .ev-row.ev-rej .ev-what{text-decoration:line-through}
+  .ev-head{display:flex;gap:5px;align-items:baseline;flex-wrap:wrap}
+  .ev-head b{font-size:12px;flex:1;min-width:0}
+  .ev-kind{font-size:9px;font-weight:700;padding:0 5px;border-radius:8px;background:var(--chip);white-space:nowrap}
+  .evk-fail{background:var(--bad);color:#fff}.evk-cause{background:var(--warn);color:#fff}
+  .evk-act{background:var(--accent);color:#fff}.evk-dec{background:var(--ok);color:#fff}
+  .ev-tog{font-size:9.5px;color:var(--muted);cursor:pointer;white-space:nowrap;border:1px solid var(--border);border-radius:3px;padding:0 4px}
+  .ev-tog:hover{color:var(--bad);border-color:var(--bad)}
+  .ev-meta{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:2px}
+  .ev-ev{font-size:10.5px;color:var(--muted);margin-top:2px;font-style:italic}
+  .ev-link{font-size:11px;margin-top:3px;padding-top:3px;border-top:1px dashed var(--border)}
+  .ev-link.ev-rej{opacity:.5;text-decoration:line-through}
+  .ev-link a{font-weight:600}
+  .ev-props{margin-top:6px;padding:5px 7px;border:1px dashed var(--border);border-radius:5px;background:var(--chip)}
+  .ev-props-h{font-size:10px;font-weight:700;margin-bottom:2px}
+  .ev-prop{font-size:11px;margin:1px 0}
   /* ---- 가이드 입력(본문과 UI상 분리, 전송 시 함께) ---- */
   .guide-in{margin-top:2px}
   .guide-h{font-size:9.5px;font-weight:700;color:var(--muted);margin-bottom:3px}
@@ -1024,7 +1044,8 @@ function snippet(t){t=String(t).replace(/\s+/g," ").trim();return t.length>52?t.
 function saveRuns(){try{localStorage.setItem(LS_RUNS,JSON.stringify((state.runs||[]).map(r=>({
   runId:r.runId,sourceId:r.sourceId,snippet:r.snippet,status:r.status,
   reviews:r.reviews,committed:r.committed,commitMsg:r.commitMsg,startedAt:r.startedAt,
-  guide:r.guide,phase:r.phase,pre:r.pre}))));}catch(e){}}   // 게이트 대기 run 복원용(guide·pre)
+  guide:r.guide,phase:r.phase,pre:r.pre,
+  flow:r.flow,events:r.events,mapping:r.mapping,evReviews:r.evReviews}))));}catch(e){}}   // 게이트·사건검토 복원용
 function loadRunsLS(){try{return JSON.parse(localStorage.getItem(LS_RUNS)||"[]")||[];}catch(e){return[];}}
 
 // 전송: CAPTURE → 히스토리 박스 즉시 생성 → 입력 set 초기화 → EXTRACT 비동기 발사·독립 폴링
@@ -1045,7 +1066,8 @@ async function submitText(text,guide,firstCapturedAt){
   try{cap=await apiPost({step:"CAPTURE",input:capInput});}
   catch(e){setRunMsg((e.code?e.code+" ":"")+e.message,true);$("#btnExtract").disabled=false;return null;}
   const run={runId:cap.run_id,sourceId:cap.result.source_id,snippet:snippet(text),guide:guide||null,
-    status:"running",phase:"structure",pre:null,proposal:null,reviews:{},committed:false,error:null,
+    flow:"event",status:"running",phase:"structure",pre:null,events:null,mapping:null,evReviews:{},
+    proposal:null,reviews:{},committed:false,error:null,
     startedAt:(cap.result.source&&cap.result.source.captured_at)||null,_t0:Date.now()};
   (state.runs=state.runs||[]).unshift(run);renderHistory();saveRuns();
   $("#btnExtract").disabled=false;setRunMsg(run.runId+" 전송됨 · 전처리 중 (계속 입력 가능)");
@@ -1065,15 +1087,35 @@ async function preflight(run){
       run.status="gate";run.phase="gate";updateRunBox(run);saveRuns();
       setRunMsg(run.runId+" — 기준정보 검토 필요 (추출 대기)");return;
     }
-    await startExtract(run);
+    await startEvents(run);
   }catch(e){run.status="error";run.error=(e.code?e.code+" ":"")+e.message;updateRunBox(run);saveRuns();}
 }
-async function startExtract(run){
-  run.status="running";run.phase="extract";run._t0=Date.now();updateRunBox(run);saveRuns();
+// 새 흐름: 확정 좌표 하에서 사건 추출 → 사람 이슈에 매핑 제안 → 게이트2(검토) → EVENT_COMMIT.
+// (LLM이 이슈를 발명하던 옛 EXTRACT를 대체. 이슈·좌표는 사람이 만들고, 기계는 사건만 붙인다.)
+async function startEvents(run){
+  run.status="running";run.phase="event";run._t0=Date.now();updateRunBox(run);saveRuns();
   try{
-    const ext=await apiPost({step:"EXTRACT",run_id:run.runId,input:{source_id:run.sourceId}});
-    run.runId=ext.run_id||run.runId;pollRunBox(run);
+    const ev=(await apiPost({step:"EVENT_EXTRACT",input:{source_id:run.sourceId}})).result;
+    run.events=ev.events||[];run.phase="map";updateRunBox(run);saveRuns();
+    let mp={links:[],unmapped:[],issue_proposals:[],candidates:[]};
+    if(run.events.length)mp=(await apiPost({step:"ISSUE_MAP",input:{events:run.events}})).result;
+    run.mapping=mp;run.evReviews={};run.status="review";run.phase="review";
+    updateRunBox(run);saveRuns();
+    setRunMsg(run.runId+" — 사건 "+run.events.length+"건 추출 · 검토 후 확정");
   }catch(e){run.status="error";run.error=(e.code?e.code+" ":"")+e.message;updateRunBox(run);saveRuns();}
+}
+async function commitEvents(run){
+  if(!run||run.committed)return;
+  const b=document.getElementById("rb-"+run.runId);const btn=b&&b.querySelector('.rb-commit-btn');
+  if(btn){btn.disabled=true;btn.innerHTML="확정 중…";}
+  try{
+    const rv=run.evReviews||{};
+    const links=((run.mapping&&run.mapping.links)||[]).filter(l=>rv["link:"+l.event]!=="reject");
+    const com=(await apiPost({step:"EVENT_COMMIT",input:{events:run.events,links,reviews:rv}})).result;
+    run.committed=true;
+    run.commitMsg="사건 "+com.events.length+"·연결 "+com.links.length+(com.warnings.length?" ·경고 "+com.warnings.length:"");
+    updateRunBox(run);saveRuns();state.ents=null;
+  }catch(e){if(btn){btn.disabled=false;btn.innerHTML="확정<br>COMMIT";}toast("확정 실패: "+(e.code?e.code+" ":"")+e.message);}
 }
 // 게이트: 기준정보를 등록한 뒤 다시 확인 (결정론이라 등록만 하면 즉시 해소된다)
 async function gateRecheck(runId){
@@ -1083,7 +1125,7 @@ async function gateRecheck(runId){
     run.pre=run.pre||{};run.pre.master=mr;
     if(mr.needs_review){updateRunBox(run);saveRuns();
       toast("아직 미등록 후보/충돌이 남아 있습니다");return;}
-    toast("기준정보 해소 완료 — 추출을 시작합니다");await startExtract(run);
+    toast("기준정보 해소 완료 — 사건 추출을 시작합니다");await startEvents(run);
   }catch(e){toast("재확인 실패: "+(e.code?e.code+" ":"")+e.message);}
 }
 // 게이트 우회: 이번 건은 기준정보 없이 진행(좌표 일부가 비게 됨 — 데드락 방지용 명시적 선택)
@@ -1094,7 +1136,7 @@ async function gateIgnore(runId){
     (n?"· 미등록 후보 "+n+"건은 좌표로 잡히지 않습니다.\n":"")+
     "· 나중에 기준정보를 등록하고 재추출하면 좌표가 붙습니다.\n\n진행할까요?"))return;
   if(run.pre&&run.pre.master)run.pre.master.ignored=true;
-  await startExtract(run);
+  await startEvents(run);
 }
 // 기존 수집을 그대로 재추출 — CAPTURE 없이 원본 source로 직접 EXTRACT.
 // 새 수집을 만들지 않으므로 수집이 합쳐지지 않고, 원본 captured_at(수집 시각)도 보존된다.
@@ -1177,32 +1219,64 @@ function updateRunTiming(run){const b=document.getElementById("rb-"+run.runId);i
   const sec=Math.max(0,Math.round((Date.now()-started)/1000));
   b.querySelectorAll('[data-timer]').forEach(t=>{t.textContent=sec+"초";});}
 function runStagesHtml(run){
-  const j=run._job||{};let ex="";
-  if(run.status==="running"){
-    const started=j.started_at?Date.parse(j.started_at):(run._t0||Date.now());
-    const sec=Math.max(0,Math.round((Date.now()-started)/1000));
-    ex=`<span class="stg run">EXTRACT ⏳ <b data-timer>${sec}초</b></span>`;
-  }else if(run.status==="done"){
-    ex=`<span class="stg ok">EXTRACT ✓${j.extract_ms?" "+(j.extract_ms/1000).toFixed(1)+"초":""}</span>`;
-  }else if(run.status==="error"){
-    ex=`<span class="stg err">EXTRACT ✗${j.extract_ms?" "+(j.extract_ms/1000).toFixed(1)+"초":""}</span>`;
-  }else if(run.status==="gate"){ex=`<span class="stg wait">EXTRACT 대기</span>`;}
-  let cm="";
-  if(run.committed)cm=`<span class="sarw">›</span><span class="stg ok">COMMIT ✓</span>`;
-  else if(run.status==="done")cm=`<span class="sarw">›</span><span class="stg wait">COMMIT 대기</span>`;
-  // 전처리·기준정보 단계 — pre가 없고 이미 끝난 run은 **구버전 히스토리**라 기존 표시를 유지한다
+  const cap=`<span class="stg ok">CAPTURE ✓</span>`, arw=`<span class="sarw">›</span>`;
   const p=run.pre||{};
-  const legacy=!p.stats&&(run.status==="done"||run.status==="error"||run.committed);
-  let mid="";
-  if(!legacy){
-    const str=p.stats?`<span class="stg ok">STRUCTURE ✓ ${p.stats.docs}문서</span>`
-      :run.phase==="structure"?`<span class="stg run">STRUCTURE ⏳</span>`:`<span class="stg wait">STRUCTURE</span>`;
-    const mst=p.master?(run.status==="gate"?`<span class="stg run">기준정보 ⏸ 검토</span>`
-        :`<span class="stg ok">기준정보 ✓${(p.master.ignored?" (무시)":"")}</span>`)
-      :run.phase==="master"?`<span class="stg run">기준정보 ⏳</span>`:`<span class="stg wait">기준정보</span>`;
-    mid=`${str}<span class="sarw">›</span>${mst}<span class="sarw">›</span>`;
+  // 구버전(옛 EXTRACT) 히스토리 run: flow가 event가 아니면 레거시 단계 표시(회귀 방지)
+  if(run.flow!=="event"){
+    const j=run._job||{};let ex="";
+    if(run.status==="running"){const started=j.started_at?Date.parse(j.started_at):(run._t0||Date.now());
+      const sec=Math.max(0,Math.round((Date.now()-started)/1000));ex=`<span class="stg run">EXTRACT ⏳ <b data-timer>${sec}초</b></span>`;}
+    else if(run.status==="done")ex=`<span class="stg ok">EXTRACT ✓${j.extract_ms?" "+(j.extract_ms/1000).toFixed(1)+"초":""}</span>`;
+    else if(run.status==="error")ex=`<span class="stg err">EXTRACT ✗</span>`;
+    const cm=run.committed?`${arw}<span class="stg ok">COMMIT ✓</span>`:(run.status==="done"?`${arw}<span class="stg wait">COMMIT 대기</span>`:"");
+    return `${cap}${arw}${ex}${cm}`;
   }
-  return `<span class="stg ok">CAPTURE ✓</span><span class="sarw">›</span>${mid}${ex}${cm}`;
+  const str=p.stats?`<span class="stg ok">STRUCTURE ✓ ${p.stats.docs}문서</span>`
+    :run.phase==="structure"?`<span class="stg run">STRUCTURE ⏳</span>`:`<span class="stg wait">STRUCTURE</span>`;
+  const mst=p.master?(run.status==="gate"?`<span class="stg run">기준정보 ⏸ 검토</span>`
+      :`<span class="stg ok">기준정보 ✓${p.master.ignored?" (무시)":""}</span>`)
+    :run.phase==="master"?`<span class="stg run">기준정보 ⏳</span>`:`<span class="stg wait">기준정보</span>`;
+  let evx;
+  if(run.status==="error")evx=`<span class="stg err">사건추출 ✗</span>`;
+  else if(run.events!=null)evx=`<span class="stg ok">사건 ${run.events.length}</span>`;
+  else if(run.phase==="event")evx=`<span class="stg run">사건추출 ⏳ <b data-timer>0초</b></span>`;
+  else evx=`<span class="stg wait">사건추출</span>`;
+  let mpx;
+  if(run.committed||run.mapping!=null)mpx=`<span class="stg ok">매핑 ${((run.mapping||{}).links||[]).length}</span>`;
+  else if(run.phase==="map")mpx=`<span class="stg run">매핑 ⏳</span>`;
+  else mpx=`<span class="stg wait">매핑</span>`;
+  const cm=run.committed?`${arw}<span class="stg ok">COMMIT ✓</span>`:(run.status==="review"?`${arw}<span class="stg wait">COMMIT 대기</span>`:"");
+  return `${cap}${arw}${str}${arw}${mst}${arw}${evx}${arw}${mpx}${cm}`;
+}
+// 사건 검토 UI(게이트2) — 추출된 사건 + 이슈 매핑 제안. 각 항목 제외 토글, 확정 시 EVENT_COMMIT.
+const EV_KIND_CLS={실패:"evk-fail",원인:"evk-cause",조치:"evk-act",결정:"evk-dec",요청:"evk-req",공지:"evk-notice",관찰:"evk-obs"};
+function runEventsHtml(run){
+  const evs=run.events||[],mp=run.mapping||{links:[],unmapped:[],issue_proposals:[]},rv=run.evReviews||{};
+  const linkByEv={};(mp.links||[]).forEach(l=>{linkByEv[l.event]=l;});
+  if(!evs.length)return `<div class="ent-empty">추출된 사건 없음 (원문에 사건이 없거나 좌표 미확정)</div>`;
+  let h=`<div class="ev-list">`;
+  evs.forEach(ev=>{
+    const rej=rv[ev.temp_id]==="reject",link=linkByEv[ev.temp_id];
+    const coord=["node","process","product","project"].map(k=>ev[k]).filter(Boolean).join("/");
+    const lrej=rv["link:"+ev.temp_id]==="reject";
+    h+=`<div class="ev-row${rej?' ev-rej':''}">
+      <div class="ev-head"><span class="ev-kind ${EV_KIND_CLS[ev.kind]||''}">${esc(ev.kind||'')}</span>
+        <b class="ev-what">${esc(ev.what||'')}</b>
+        <span class="ev-tog" data-evrej="${escAttr(ev.temp_id)}">${rej?'↩ 되살리기':'✕ 제외'}</span></div>
+      <div class="ev-meta">${coord?esc(coord)+' · ':''}${ev.occurred_at?esc(ev.occurred_at)+' · ':''}${ev.who?esc(ev.who)+' · ':''}${esc(ev.confidence||'')}</div>
+      ${ev.evidence?`<div class="ev-ev">"${esc(ev.evidence)}"</div>`:''}
+      ${link?`<div class="ev-link${lrej?' ev-rej':''}">→ <a href="#e/${escAttr(link.issue)}">${esc(link.issue)}</a> 연결 <span class="dim">${esc(link.rationale||'')}</span>
+        <span class="ev-tog" data-linkrej="${escAttr(ev.temp_id)}">${lrej?'↩ 연결 되살리기':'✕ 연결 제외'}</span></div>`
+        :`<div class="ev-link dim">→ 연결된 이슈 없음(미매핑) — 확정하면 이슈 없이 사건만 저장</div>`}
+    </div>`;
+  });
+  h+=`</div>`;
+  if((mp.issue_proposals||[]).length){
+    h+=`<div class="ev-props"><div class="ev-props-h">💡 신규 이슈 제안 <span class="dim">(사람이 이슈 탭에서 등록)</span></div>`
+      +mp.issue_proposals.map(p=>{const co=["node","process","product","project"].map(k=>(p.coordinates||{})[k]).filter(Boolean).join("/");
+        return `<div class="ev-prop">+ ${esc(p.title||'')} <span class="dim">${esc(co)}</span></div>`;}).join("")+`</div>`;
+  }
+  return h;
 }
 const CH_KO={mail:"메일",messenger:"메신저",meeting:"회의록",confluence:"Confluence",ticket:"티켓",other:"기타"};
 function profileHtml(p){
@@ -1358,16 +1432,23 @@ function runBoxHtml(run){
     :'<span class="rb-status done">검토대기</span>';
   let body,commit="";
   if(st==="gate"){body=runPreHtml(run)+runGateHtml(run);}
-  else if(st==="running"){body=runPreHtml(run)+`<div class="rb-run">추출 중… <span class="rb-timer" data-timer>0초</span> <span style="color:var(--muted)">(모델 판단 대기)</span></div>`;}
+  else if(st==="running"){body=runPreHtml(run)+`<div class="rb-run">${run.flow==="event"?"사건 추출·이슈 매핑 중…":"추출 중…"} <span class="rb-timer" data-timer>0초</span> <span style="color:var(--muted)">(모델 판단 대기)</span></div>`;}
   else if(st==="error"){body=`<div class="rb-err">${esc(run.error||'추출 실패')}</div>`+
     `<div class="rb-actions"><button class="rb-retry" data-retry="${escAttr(run.runId)}">↻ 재시도</button></div>`;}
-  else if(run.committed){   // 확정 후: 원문 + 접힌 복기 스냅샷(읽기전용)
-    body=`<div class="rb-meta">확정 완료 — ${esc(run.commitMsg||'')} · <button class="rb-src-btn" data-runsrc="${escAttr(run.runId)}">📄 원문</button></div>`+
-      `<div id="runRaw-${escAttr(run.runId)}" class="run-raw"></div>`+
-      `<div class="rb-recap"><span class="rb-recap-tog" data-recap="${escAttr(run.runId)}">${run._recapOpen?'▾':'▸'} 커밋 당시 상태 (복기)</span>`+
-      (run._recapOpen?`<div class="rb-recap-body">${recapHtml(run)}</div>`:'')+`</div>`;
+  else if(run.committed){   // 확정 후
+    if(run.flow==="event"){
+      body=`<div class="rb-meta">확정 완료 — ${esc(run.commitMsg||'')} · <button class="rb-src-btn" data-runsrc="${escAttr(run.runId)}">📄 원문</button></div><div id="runRaw-${escAttr(run.runId)}" class="run-raw"></div>`;
+    }else{   // 레거시 EXTRACT 복기
+      body=`<div class="rb-meta">확정 완료 — ${esc(run.commitMsg||'')} · <button class="rb-src-btn" data-runsrc="${escAttr(run.runId)}">📄 원문</button></div>`+
+        `<div id="runRaw-${escAttr(run.runId)}" class="run-raw"></div>`+
+        `<div class="rb-recap"><span class="rb-recap-tog" data-recap="${escAttr(run.runId)}">${run._recapOpen?'▾':'▸'} 커밋 당시 상태 (복기)</span>`+
+        (run._recapOpen?`<div class="rb-recap-body">${recapHtml(run)}</div>`:'')+`</div>`;
+    }
     commit=`<div class="rb-commit"><div class="rb-done">✓ 확정</div></div>`;
-  }else{   // 검토대기: 인터랙티브 후보 + 확정 버튼
+  }else if(run.flow==="event"&&st==="review"){   // 게이트2: 사건 검토 + 이슈 매핑
+    body=runPreHtml(run)+runEventsHtml(run);
+    commit=`<div class="rb-commit"><button class="rb-commit-btn" data-evcommit="${escAttr(run.runId)}">확정<br>COMMIT</button></div>`;
+  }else{   // 레거시: 후보 검토 + 확정
     body=runCandsHtml(run);
     commit=`<div class="rb-commit"><button class="rb-commit-btn" data-commit="${escAttr(run.runId)}">확정<br>COMMIT</button></div>`;}
   return `<div class="run-box" id="rb-${escAttr(run.runId)}" data-run="${escAttr(run.runId)}">
@@ -1416,14 +1497,20 @@ async function restoreRuns(){
     const srv=byId[s.runId];
     const known=!!srv||(job&&job.state&&job.state!=="unknown");
     if(!known){
-      // 기준정보 게이트에서 멈춘 run은 EXTRACT를 시작하지 않아 서버에 job·proposal이 없다.
-      // 원문(source)이 살아 있으면 로컬 기록으로 복원한다 — 새로고침에 검토 대기가 사라지면 안 된다.
-      if(s.status==="gate"&&s.sourceId){
+      // 사건 흐름(EVENT)·게이트 run은 동기 처리라 서버에 job이 없다. 원문이 살아 있으면 로컬 기록으로 복원
+      // (새로고침에 게이트/사건 검토 대기가 사라지면 안 된다). 중단된 running은 재전송 유도(error).
+      if((s.status==="gate"||s.flow==="event")&&s.sourceId){
         let alive=false;
         try{alive=(await fetch("api/source_text?id="+encodeURIComponent(s.sourceId))).ok;}catch(e){}
-        if(alive)state.runs.push({runId:s.runId,sourceId:s.sourceId,snippet:s.snippet,
-          guide:s.guide||null,status:"gate",phase:"gate",pre:s.pre||null,
-          reviews:s.reviews||{},committed:false,proposal:null,startedAt:s.startedAt,_t0:Date.now()});
+        if(alive){
+          let st=s.status;let err=null;
+          if(st==="running"){st="error";err="새로고침으로 중단됨 — 다시 전송하세요";}
+          state.runs.push({runId:s.runId,sourceId:s.sourceId,snippet:s.snippet,guide:s.guide||null,
+            flow:s.flow||null,status:st,phase:s.phase,pre:s.pre||null,error:err,
+            events:s.events||null,mapping:s.mapping||null,evReviews:s.evReviews||{},
+            committed:s.committed||false,commitMsg:s.commitMsg,reviews:s.reviews||{},proposal:null,
+            startedAt:s.startedAt,_t0:Date.now()});
+        }
       }
       continue;   // 그 외 서버가 모르는 run(초기화 등) → 히스토리에서 자동 제거
     }
@@ -1448,7 +1535,7 @@ async function restoreRuns(){
 setInterval(function(){(state.runs||[]).forEach(function(r){if(r.status==="running")updateRunTiming(r);});},1000);
 
 /* ---------- 이슈 (끝단계: 정리된 리스트 → 세부 페이지) ---------- */
-const TYPE_ORDER=["issue","case","finding","action","initiative","pattern","context"];
+const TYPE_ORDER=["issue","event","case","finding","action","initiative","pattern","context"];
 function tyCls(t){return String(t||"").replace(/[^A-Za-z0-9_-]/g,"");}
 /* PM 정형 필드: 파생(진행기간·D-day)은 오늘 기준으로 계산 */
 function pmDerived(e){
@@ -2353,6 +2440,17 @@ document.addEventListener("click",e=>{
   if(ehide){hideEntity(ehide.dataset.enthide,ehide.dataset.hidden!=="1");return;}
   const edel=e.target.closest("[data-entdel]");
   if(edel){deleteEntity(edel.dataset.entdel);return;}
+  // ── run-box 사건 검토(게이트2) ──
+  const evc=e.target.closest("[data-evcommit]");
+  if(evc){commitEvents(findRun(evc.dataset.evcommit));return;}
+  const evr=e.target.closest("[data-evrej]");
+  if(evr){const box=evr.closest(".run-box");const run=findRun(box.dataset.run);if(!run)return;
+    const t=evr.dataset.evrej;run.evReviews=run.evReviews||{};
+    run.evReviews[t]=run.evReviews[t]==="reject"?"accept":"reject";saveRuns();updateRunBox(run);return;}
+  const lkr=e.target.closest("[data-linkrej]");
+  if(lkr){const box=lkr.closest(".run-box");const run=findRun(box.dataset.run);if(!run)return;
+    const t="link:"+lkr.dataset.linkrej;run.evReviews=run.evReviews||{};
+    run.evReviews[t]=run.evReviews[t]==="reject"?"accept":"reject";saveRuns();updateRunBox(run);return;}
   // ── run-box 기준정보 게이트 ──
   const gchk=e.target.closest("[data-gatechk]");
   if(gchk){gateRecheck(gchk.dataset.gatechk);return;}

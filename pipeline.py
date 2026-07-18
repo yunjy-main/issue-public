@@ -883,6 +883,83 @@ def handle_step(body):
                 failed.append({"op": op, "id": row.get("id"), "error": type(ex).__name__})
         return ok({"applied": applied, "failed": failed, "n": len(applied)}, ["VIEW_BUILD", "STOP"])
 
+    # ---------- 사건 추출 → 이슈 매핑 (기계가 사건을 뽑아 사람 이슈에 붙임) ----------
+    if step == "EVENT_EXTRACT":   # 확정 좌표 하에서 사건만 추출(이슈 안 만듦)
+        import master as master_mod
+        sid = inp.get("source_id")
+        docs = (store.get_struct_docs(sid) or {}).get("docs") if sid else None
+        if docs is None:
+            txt = inp.get("text")
+            if not txt:
+                raise StepError("E-1003", "source_id(STRUCTURE 완료) 또는 text 필요", 422)
+            docs = [{"doc_id": "adhoc", "body_clean": txt}]
+        src = store.get_source(sid) if sid else {}
+        guide = inp.get("guide") or (src or {}).get("guide") or ""
+        ref = (src or {}).get("captured_at")
+        mg = store.get_master()
+        events = []
+        for d in docs:
+            coords = master_mod.resolve(d.get("body_clean") or "", mg)["coordinates"]
+            try:
+                evs = llm.extract_events(d.get("body_clean") or "", coords, ref, guide)
+            except llm.LLMError as e:
+                raise StepError(e.code, str(e), 502)
+            for ev in evs:
+                ev = dict(ev)
+                for k in ("node", "process", "product", "project"):
+                    ev[k] = coords.get(k)
+                ev["source_refs"] = ["%s#%s" % (sid, d.get("doc_id", ""))] if sid else []
+                ev["title"] = ev.get("what")
+                events.append(ev)
+        for i, ev in enumerate(events, 1):   # 문서 넘어 temp_id 유일화
+            ev["temp_id"] = "ev%d" % i
+        return ok({"events": events, "source_id": sid}, ["ISSUE_MAP", "EVENT_COMMIT", "STOP"])
+
+    if step == "ISSUE_MAP":   # 사건 → 사람이 등록한 이슈 연결 제안 (좌표로 후보 사전필터)
+        events = inp.get("events") or []
+        issues = [e for e in store.list_entities() if e.get("type") == "issue"]
+
+        def _coset(o):
+            return {(k, o.get(k)) for k in ("node", "process", "product", "project") if o.get(k)}
+        evc = set()
+        for ev in events:
+            evc |= _coset(ev)
+        cand = [e for e in issues if _coset(e) & evc] or issues   # 겹침 없으면 전체 후보
+        try:
+            res = llm.map_events(events, cand)
+        except llm.LLMError as e:
+            raise StepError(e.code, str(e), 502)
+        res["candidates"] = [e.get("id") for e in cand]
+        return ok(res, ["EVENT_COMMIT", "STOP"])
+
+    if step == "EVENT_COMMIT":   # 게이트2 통과분: 사건 저장 + 이슈 연결(event part_of issue)
+        actor = inp.get("actor", "human")
+        events = inp.get("events") or []
+        reviews = inp.get("reviews") or {}   # temp_id → accept|reject (기본 accept)
+        links = {l.get("event"): l.get("issue") for l in (inp.get("links") or []) if l.get("event")}
+        committed_ev, committed_links, warnings = [], [], []
+        tmp2id = {}
+        for ev in events:
+            tid = ev.get("temp_id")
+            if reviews.get(tid) == "reject":
+                continue
+            e = store.create_event(ev, actor)
+            tmp2id[tid] = e["id"]
+            committed_ev.append(e["id"])
+        for tid, issue_id in links.items():   # 사건을 이슈에 붙임 → 트리에서 이슈 밑에 사건 나열
+            eid = tmp2id.get(tid)
+            if not eid:
+                continue
+            if reviews.get("link:" + tid) == "reject":
+                continue
+            rel, err = store.add_relation(eid, issue_id, "part_of", HIER_TYPES, actor)
+            if err:
+                warnings.append({"event": eid, "issue": issue_id, "code": err})
+            else:
+                committed_links.append(rel["id"])
+        return ok({"events": committed_ev, "links": committed_links, "warnings": warnings},
+                  ["VIEW_BUILD", "STOP"])
+
     if step == "VIEW_BUILD":
         return ok({"stats": store.stats()}, ["CAPTURE", "STOP"])
 
