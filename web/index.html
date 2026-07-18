@@ -331,9 +331,14 @@
   .mst-sec-h{display:flex;gap:6px;align-items:center;font-size:10px;color:var(--muted);font-family:var(--mono);
     font-weight:700;margin:2px 0 3px;padding-bottom:2px;border-bottom:1px solid var(--border)}
   .mst-sec-h .dim{flex:1}
-  .mst-row{display:flex;flex-wrap:wrap;gap:4px;align-items:baseline;padding:2px 5px;border-radius:4px;cursor:pointer;font-size:11.5px}
+  .mst-row{display:flex;flex-wrap:nowrap;gap:4px;align-items:center;padding:2px 5px;border-radius:4px;cursor:pointer;font-size:11.5px}
   .mst-row:hover{background:var(--hover)}
   .mst-row.mst-on{background:var(--chip);outline:1px solid var(--accent)}
+  .mst-row .mst-lbl{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mst-act{margin-left:auto;flex:0 0 auto;display:inline-flex;gap:3px;align-self:center}
+  .mst-ibtn{border:1px solid var(--border);background:var(--panel);color:var(--muted);border-radius:4px;padding:0 5px;font-size:10.5px;line-height:17px;cursor:pointer;white-space:nowrap}
+  .mst-ibtn:hover{background:var(--hover);color:var(--fg)}
+  .mst-ibtn.dgr:hover{border-color:var(--bad);color:var(--bad)}
   .mst-proc{padding-left:12px}
   .mst-del{opacity:.5;cursor:default}
   .mst-sub{padding:1px 0 4px 12px}
@@ -1899,9 +1904,12 @@ function issNLPlanHtml(){
         <b>${esc(label).slice(0,40)}</b><span class="plan-det">${esc(det)}</span>
         ${p.confidence?`<span class="dim" style="font-size:9px">${esc(p.confidence)}</span>`:''}
         ${p.warn?`<span class="plan-warn">⚠ ${esc(p.warn)}</span>`:''}</label>`;
-    }).join("")+`</div>
-    <div class="seed-ctl"><button class="btn primary" id="btnIssApply">선택 적용</button>
-      <span class="dim">삭제·경고 항목은 기본 미선택. 좌표 없는 create는 적용돼도 막힙니다.</span></div>`;
+    }).join("")+`</div>`;
+    const applicable=plan.filter(p=>p.op!=="skip"&&!p.warn).length;   // 적용 가능한(=skip/경고 아님) 항목 수
+    h+=applicable
+      ? `<div class="seed-ctl"><button class="btn primary" id="btnIssApply">선택 적용</button>
+          <span class="dim">삭제·경고 항목은 기본 미선택. 좌표 없는 create는 적용돼도 막힙니다.</span></div>`
+      : `<div class="seed-ctl"><span class="dim">적용할 새 이슈가 없습니다 — 모두 이미 등록됐거나 변경 없음(skip). 개별 이슈는 <b>이슈 목록</b>에서 직접 편집·종결하세요.</span></div>`;
   }
   if(nm)h+=`<div class="plan-err">기준정보 먼저 등록 필요:<br>`+s.needs_master.map(u=>`· ${esc(u.surface||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
   if(nu)h+=`<div class="plan-err">미해소:<br>`+s.unresolved.map(u=>`· ${esc(u.text||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
@@ -2022,10 +2030,16 @@ function aliasChips(it){
   const a=it.aliases||[];
   return a.length?`<span class="mst-al">${a.map(x=>`<span class="mst-chip">${esc(x)}</span>`).join("")}</span>`:'';
 }
+// 행마다 항상 보이는 편집·삭제 버튼 — "무엇을 할 수 있는지"를 명확히(행 클릭도 편집됨)
+function mstActs(kind,id){
+  return `<span class="mst-act">`
+    +`<button class="mst-ibtn" data-mstsel="${escAttr(id)}" title="편집">✏️ 편집</button>`
+    +`<button class="mst-ibtn dgr" data-mstdel="${escAttr(kind+":"+id)}" title="삭제">🗑</button></span>`;
+}
 function mstRowHtml(e,sel,extra){
   const on=sel===e.id?" mst-on":"";
   return `<div class="mst-row${extra||''}${on}" data-mstsel="${escAttr(e.id)}">
-    <b>${esc(e.id)}</b>${aliasChips(e)}${e.label?`<span class="dim"> ${esc(e.label)}</span>`:''}</div>`;
+    <span class="mst-lbl"><b>${esc(e.id)}</b>${aliasChips(e)}${e.label?`<span class="dim"> ${esc(e.label)}</span>`:''}</span>${mstActs(e.kind,e.id)}</div>`;
 }
 function renderMaster(){
   const ents=(state.mgraph&&state.mgraph.entities)||[];
@@ -2039,7 +2053,7 @@ function renderMaster(){
   nodes.forEach(n=>{
     h+=mstRowHtml(n,sel," mst-node");
     (byNode[n.id]||[]).forEach(p=>{h+=`<div class="mst-row mst-proc${sel===p.id?" mst-on":""}" data-mstsel="${escAttr(p.id)}">
-        <span class="dim">└</span> <b>${esc(p.id)}</b>${aliasChips(p)}${p.label?`<span class="dim"> ${esc(p.label)}</span>`:''}</div>`;});
+        <span class="mst-lbl"><span class="dim">└</span> <b>${esc(p.id)}</b>${aliasChips(p)}${p.label?`<span class="dim"> ${esc(p.label)}</span>`:''}</span>${mstActs("process",p.id)}</div>`;});
     h+=`<div class="mst-sub"><button class="btn mini" data-mstnew="process" data-node="${escAttr(n.id)}">+ process (${esc(n.id)})</button></div>`;
   });
   if((byNode["(미지정)"]||[]).length){   // 소속 node 없는 process(비정상) — 눈에 띄게
@@ -2167,9 +2181,12 @@ function mstPlanHtml(){
         <span class="plan-det">${det}</span>
         ${p.confidence?`<span class="dim" style="font-size:9px">${esc(p.confidence)}</span>`:''}
         ${p.warn?`<span class="plan-warn">⚠ ${esc(p.warn)}</span>`:''}</label>`;
-    }).join("")+`</div>
-    <div class="seed-ctl"><button class="btn primary" id="btnMstApply">선택 적용</button>
-      <span class="dim">적용은 전통 CRUD와 동일한 저장 경로·검증을 지납니다. 삭제는 기본 미선택.</span></div>`;
+    }).join("")+`</div>`;
+    const applicable=plan.filter(p=>p.op!=="skip"&&!p.warn).length;   // 적용 가능한(=skip/경고 아님) 항목 수
+    h+=applicable
+      ? `<div class="seed-ctl"><button class="btn primary" id="btnMstApply">선택 적용</button>
+          <span class="dim">적용은 전통 CRUD와 동일한 저장 경로·검증을 지납니다. 삭제는 기본 미선택.</span></div>`
+      : `<div class="seed-ctl"><span class="dim">적용할 새 기준정보가 없습니다 — 모두 이미 등록됨(skip). 개별 항목은 <b>위 트리에서 ✏️편집·🗑삭제</b>하거나 <b>+ node/process/…</b>로 새로 만드세요.</span></div>`;
   }
   if(nUnres)h+=`<div class="plan-err">미해소(사람 확인 필요):<br>`
     +s.unresolved.map(u=>`· ${esc(u.text||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
