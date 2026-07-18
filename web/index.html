@@ -350,6 +350,10 @@
   .mst-sub{padding:1px 0 4px 12px}
   .mst-al{display:inline-flex;flex-wrap:wrap;gap:3px}
   .mst-chip{background:var(--chip);border-radius:7px;padding:0 5px;font-size:9px;color:var(--muted);font-family:var(--mono)}
+  .mst-chip.mst-xnode{background:transparent;border:1px solid var(--accent);color:var(--accent)}
+  .mst-xnodes{display:flex;flex-wrap:wrap;gap:3px 10px}
+  .mst-xn{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--fg);font-family:var(--mono)}
+  .mst-xn input{width:auto;margin:0}
   .mst-form{border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--chip)}
   .mst-form-h{font-size:11px;font-weight:700;margin-bottom:6px;display:flex;gap:5px;align-items:center}
   .mst-form .edf{display:block;margin-bottom:6px}
@@ -2022,11 +2026,18 @@ async function loadMaster(force){
 function mstKinds(){return (state.mgraph&&state.mgraph.kinds)||["node","process","product","project"];}
 function mstByKind(kind){return ((state.mgraph&&state.mgraph.entities)||[]).filter(e=>e.kind===kind);}
 function mstFind(id){return ((state.mgraph&&state.mgraph.entities)||[]).find(x=>String(x.id).toLowerCase()===String(id).toLowerCase());}
-function mstParent(id){const r=((state.mgraph&&state.mgraph.relations)||[])
-  .find(x=>x.rel==="narrower_of"&&String(x.from).toLowerCase()===String(id).toLowerCase());return r?r.to:null;}
+function _mstRels(id){return ((state.mgraph&&state.mgraph.relations)||[])
+  .filter(x=>x.rel==="narrower_of"&&String(x.from).toLowerCase()===String(id).toLowerCase());}
+function mstParent(id){const rs=_mstRels(id);const p=rs.find(x=>x.primary)||rs[0];return p?p.to:null;}   // 주(primary)
+function mstParents(id){const rs=_mstRels(id);   // 전체 — 주 먼저(M:N)
+  return rs.filter(x=>x.primary).map(x=>x.to).concat(rs.filter(x=>!x.primary).map(x=>x.to));}
 function aliasChips(it){
   const a=it.aliases||[];
   return a.length?`<span class="mst-al">${a.map(x=>`<span class="mst-chip">${esc(x)}</span>`).join("")}</span>`:'';
+}
+function extraNodeChips(pid){   // 부가 소속 node(주 제외) — M:N 표시. '+N5' 형태.
+  const par=mstParents(pid);if(par.length<=1)return '';
+  return `<span class="mst-al">`+par.slice(1).map(n=>`<span class="mst-chip mst-xnode" title="부가 소속 node(주 아님)">+${esc(n)}</span>`).join("")+`</span>`;
 }
 // 행마다 항상 보이는 편집·삭제 버튼 — "무엇을 할 수 있는지"를 명확히(행 클릭도 편집됨)
 function mstActs(kind,id){
@@ -2051,7 +2062,7 @@ function renderMaster(){
   nodes.forEach(n=>{
     h+=mstRowHtml(n,sel," mst-node");
     (byNode[n.id]||[]).forEach(p=>{h+=`<div class="mst-row mst-proc${sel===p.id?" mst-on":""}" data-mstsel="${escAttr(p.id)}">
-        <span class="mst-lbl"><span class="dim">└</span> <b>${esc(p.id)}</b>${aliasChips(p)}${p.label?`<span class="dim"> ${esc(p.label)}</span>`:''}</span>${mstActs("process",p.id)}</div>`;});
+        <span class="mst-lbl"><span class="dim">└</span> <b>${esc(p.id)}</b>${aliasChips(p)}${extraNodeChips(p.id)}${p.label?`<span class="dim"> ${esc(p.label)}</span>`:''}</span>${mstActs("process",p.id)}</div>`;});
     h+=`<div class="mst-sub"><button class="btn mini" data-mstnew="process" data-node="${escAttr(n.id)}">+ process (${esc(n.id)})</button></div>`;
   });
   if((byNode["(미지정)"]||[]).length){   // 소속 node 없는 process(비정상) — 눈에 띄게
@@ -2086,12 +2097,17 @@ function renderMaster(){
 }
 function mstFormHtml(ed){
   const {typ,id,isNew}=ed, it=isNew?{}:(mstFind(id)||{});
-  const curNode=isNew?ed.node:mstParent(id);
+  const curNodes=isNew?(ed.node?[ed.node]:[]):mstParents(id);
   const nodes=mstByKind("node");
+  const primary=(curNodes[0]||(nodes[0]&&nodes[0].id)||"");
+  const extraSet=new Set(curNodes.slice(1).map(x=>String(x).toLowerCase()));
   const nodeSel=typ==="process"
-    ? `<label class="edf"><span>소속 node <b class="req">*</b> <span class="dim">(narrower_of 관계로 저장)</span></span><select data-mf="node">`
-      +nodes.map(n=>`<option ${(curNode===n.id)?'selected':''}>${esc(n.id)}</option>`).join("")
-      +`</select></label>`:'';
+    ? `<label class="edf"><span>주 node <b class="req">*</b> <span class="dim">(좌표 자동채움 기준 — primary)</span></span><select data-mf="node">`
+      +nodes.map(n=>`<option ${(String(primary).toLowerCase()===String(n.id).toLowerCase())?'selected':''}>${esc(n.id)}</option>`).join("")
+      +`</select></label>`
+      +`<label class="edf"><span>추가 node <span class="dim">(부가 소속 · M:N — 승격엔 안 씀)</span></span>`
+      +`<div class="mst-xnodes">`+nodes.map(n=>`<label class="mst-xn"><input type="checkbox" data-mfx="${escAttr(n.id)}" ${extraSet.has(String(n.id).toLowerCase())?'checked':''}> ${esc(n.id)}</label>`).join("")+`</div></label>`
+    :'';
   return `<div class="mst-form-h">${isNew?'새 항목':'편집'} <span class="ty-badge">${esc(typ)}</span>
       ${isNew?'':`<span class="tag">rev.${esc(it.revision||1)}</span>`}</div>
     <label class="edf"><span>id <b class="req">*</b> <span class="dim">정준 이름(예: N7P)</span></span>
@@ -2116,7 +2132,12 @@ async function mstSave(){
   if(!id){alert("id는 필수입니다.");return;}
   const item={id,label:(f.label||"").trim()||null,
     aliases:(f.aliases||"").split(",").map(s=>s.trim()).filter(Boolean)};
-  if(ed.typ==="process")item.node=(f.node||"").trim();
+  if(ed.typ==="process"){   // 주(primary) + 추가(부가) node → 권위적 nodes 집합
+    const primary=(f.node||"").trim();
+    const extras=[...document.querySelectorAll('#mstForm [data-mfx]:checked')].map(cb=>cb.dataset.mfx);
+    const nodes=[primary].concat(extras).filter((n,i,a)=>n&&a.findIndex(x=>x.toLowerCase()===n.toLowerCase())===i);
+    item.nodes=nodes; item.primary_node=primary; item.node=primary;
+  }
   try{
     await apiPost({step:"MASTER_UPSERT",input:{mtype:ed.typ,item}});
     state.mstEdit=null;state.mstSel=id;

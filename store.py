@@ -964,8 +964,9 @@ def redirect_relations(absorbed_ids, survivor_id, actor="human"):
 # 전통 CRUD·자연어 CRUD가 공유하는 유일한 저장 경로. projection=단일 master.json/.yaml, 이력=이벤트 정본.
 MASTER_KINDS = ("node", "process", "product", "project")   # 씨앗 kind(확장 가능) — UI 렌더 순서
 MASTER_REL_RULES = {
-    # rel: 자식(from) → 부모(to). max_per_from=1 → 트리(결정론 유지). promote=True → 좌표 승격.
-    "narrower_of": {"from_kind": "process", "to_kind": "node", "max_per_from": 1, "promote": True},
+    # rel: 자식(from) → 부모(to). primary=True → M:N 허용하되 '주(primary) 부모' 1개를 표시,
+    # 좌표 승격(promote)은 주 부모로만 → 결정론 유지. 나머지는 부가 소속(메타).
+    "narrower_of": {"from_kind": "process", "to_kind": "node", "primary": True, "promote": True},
 }
 _MREF_FIELD = {"node": "node", "process": "process", "product": "product", "project": "project"}
 
@@ -1007,12 +1008,26 @@ def _mactive(g, mid, kind=None):
 
 
 def _mparent(g, mid, rel="narrower_of"):
-    """active narrower_of 관계에서 부모(to) id. max_per_from=1이라 최대 1개."""
+    """active narrower_of 부모(to) id — 주(primary) 부모 우선(좌표 승격용). 없으면 첫 active."""
+    fb = None
     for r in g["relations"]:
         if (r.get("state", "active") == "active" and r.get("rel") == rel
                 and str(r.get("from", "")).lower() == str(mid).lower()):
-            return r.get("to")
-    return None
+            if r.get("primary"):
+                return r.get("to")
+            if fb is None:
+                fb = r.get("to")
+    return fb
+
+
+def _mparents(g, mid, rel="narrower_of"):
+    """active 부모 id 전체 — 주(primary) 먼저(M:N)."""
+    prim, rest = [], []
+    for r in g["relations"]:
+        if (r.get("state", "active") == "active" and r.get("rel") == rel
+                and str(r.get("from", "")).lower() == str(mid).lower()):
+            (prim if r.get("primary") else rest).append(r.get("to"))
+    return prim + rest
 
 
 def _mchildren(g, mid, rel="narrower_of"):
@@ -1047,11 +1062,26 @@ def master_find(g, mid, kind=None):
 
 
 def master_parent(g, mid):
-    """편의: 그래프 g에서 mid의 부모 좌표 id(process→node). 없으면 None."""
+    """편의: 그래프 g에서 mid의 주(primary) 부모 좌표 id(process→node). 없으면 첫 active. 없으면 None."""
+    fb = None
     for r in g.get("relations", []):
-        if r.get("rel") == "narrower_of" and str(r.get("from", "")).lower() == str(mid).lower():
-            return r.get("to")
-    return None
+        if (r.get("rel") == "narrower_of" and r.get("state", "active") == "active"
+                and str(r.get("from", "")).lower() == str(mid).lower()):
+            if r.get("primary"):
+                return r.get("to")
+            if fb is None:
+                fb = r.get("to")
+    return fb
+
+
+def master_parents(g, mid):
+    """그래프 g에서 mid의 부모 좌표 id 전체 — 주(primary) 먼저(M:N)."""
+    prim, rest = [], []
+    for r in g.get("relations", []):
+        if (r.get("rel") == "narrower_of" and r.get("state", "active") == "active"
+                and str(r.get("from", "")).lower() == str(mid).lower()):
+            (prim if r.get("primary") else rest).append(r.get("to"))
+    return prim + rest
 
 
 def master_refs(kind, mid):
@@ -1062,26 +1092,45 @@ def master_refs(kind, mid):
     return sum(1 for e in list_entities() if str(e.get(f) or "").lower() == str(mid).lower())
 
 
-def _set_parent(g, pid, node_id, actor):
-    """process pid의 narrower_of 부모를 node_id로 설정(교체). g를 제자리 수정, 이벤트 append.
-    max_per_from=1(트리)이라 기존 narrower_of는 소프트삭제하고 새로 만든다. 반환 error_code|None."""
-    node_id = str(node_id).strip()
-    nd = _mactive(g, node_id, "node")
-    if not nd:
-        return "E-4304"   # 소속 node가 마스터에 없음
-    cur_to = _mparent(g, pid)
-    if cur_to and cur_to.lower() == node_id.lower():
-        return None   # 이미 그 부모
-    for r in g["relations"]:   # 기존 narrower_of 소프트삭제(교체)
+def _set_process_nodes(g, pid, nodes, primary, actor):
+    """process pid의 소속 node 집합을 nodes(list)로 맞춘다(M:N). primary=주 node id(좌표 승격 기준).
+    없는 건 추가, 목록에 없는 기존 관계는 소프트삭제, primary 플래그 갱신. g 제자리 수정. 반환 code|None."""
+    uniq, seen = [], set()
+    for n in (nodes or []):
+        n = str(n).strip()
+        if n and n.lower() not in seen:
+            seen.add(n.lower()); uniq.append(n)
+    if not uniq:
+        return "E-4303"   # process는 소속 node 최소 1개 필수
+    primary = str(primary or "").strip()
+    if primary.lower() not in {n.lower() for n in uniq}:
+        primary = uniq[0]
+    for n in uniq:   # 모든 node가 마스터에 있어야
+        if not _mactive(g, n, "node"):
+            return "E-4304"
+    want = {n.lower(): n for n in uniq}
+    existing = {}
+    for r in g["relations"]:
         if (r.get("state", "active") == "active" and r.get("rel") == "narrower_of"
                 and str(r.get("from", "")).lower() == str(pid).lower()):
+            existing[str(r.get("to", "")).lower()] = r
+    for k, r in existing.items():   # 원치 않는 기존 부모 소프트삭제
+        if k not in want:
             r["state"] = "deleted"; r["revision"] = r.get("revision", 1) + 1; r["updated_at"] = now_iso()
-    rid = next_id("MREL")
-    row = {"id": rid, "from": pid, "rel": "narrower_of", "to": node_id,
-           "state": "active", "revision": 1, "updated_at": now_iso()}
-    g["relations"].append(row)
-    append_event({"event": "master.rel_add", "id": rid, "from": pid, "rel": "narrower_of",
-                  "to": node_id, "actor": actor})
+            append_event({"event": "master.rel_remove", "id": r.get("id"), "from": pid,
+                          "rel": "narrower_of", "to": r.get("to"), "actor": actor})
+    for k, n in want.items():   # 추가/갱신
+        is_primary = (k == primary.lower())
+        r = existing.get(k)
+        if r is None:
+            rid = next_id("MREL")
+            g["relations"].append({"id": rid, "from": pid, "rel": "narrower_of", "to": n,
+                                   "primary": is_primary, "state": "active", "revision": 1,
+                                   "updated_at": now_iso()})
+            append_event({"event": "master.rel_add", "id": rid, "from": pid, "rel": "narrower_of",
+                          "to": n, "primary": is_primary, "actor": actor})
+        elif bool(r.get("primary")) != is_primary:
+            r["primary"] = is_primary; r["revision"] = r.get("revision", 1) + 1; r["updated_at"] = now_iso()
     return None
 
 
@@ -1099,9 +1148,22 @@ def master_upsert(kind, item, actor="human"):
         cur = _mfind(g, mid)
         if cur and cur.get("kind") and cur.get("kind") != kind:
             return None, "E-4310"   # 같은 id가 다른 kind로 이미 존재
-        node = item.get("node") or (master_parent(get_master(), mid) if cur else None)
-        if kind == "process" and not node:
-            return None, "E-4303"   # process는 소속 node 필수
+        proc_nodes = proc_primary = None
+        if kind == "process":   # 소속 node 집합(M:N) + 주(primary) node 결정
+            cur_nodes = _mparents(g, mid) if cur else []
+            if item.get("nodes") is not None:          # 폼/명시: 권위적 집합(교체)
+                proc_nodes = [str(n) for n in item["nodes"]]
+            elif item.get("node"):                     # 단일 node → 주. 수정 시 기존 부가 유지
+                n = str(item["node"]).strip()
+                proc_nodes = [n] + [x for x in cur_nodes if str(x).lower() != n.lower()]
+            else:
+                proc_nodes = list(cur_nodes)
+            for n in (item.get("nodes_add") or []):    # 계획: 부가 추가
+                if str(n).strip().lower() not in {str(x).lower() for x in proc_nodes}:
+                    proc_nodes.append(str(n))
+            proc_primary = item.get("primary_node") or item.get("node") or (proc_nodes[0] if proc_nodes else None)
+            if not proc_nodes:
+                return None, "E-4303"   # process는 소속 node 최소 1개 필수
         row = dict(cur or {})
         row.update({"id": mid, "kind": kind})
         row.pop("type", None); row.pop("node", None)   # 레거시/파생 필드 저장 안 함
@@ -1125,8 +1187,8 @@ def master_upsert(kind, item, actor="human"):
                 if str(x.get("id", "")).lower() == mid.lower():
                     g["entities"][i] = row
                     break
-        if kind == "process" and item.get("node"):   # 소속 node 관계 설정/교체
-            err = _set_parent(g, mid, item["node"], actor)
+        if kind == "process":   # 소속 node 관계(M:N) reconcile
+            err = _set_process_nodes(g, mid, proc_nodes, proc_primary, actor)
             if err:
                 return None, err
         append_event({"event": "master.upsert", "id": mid, "kind": kind,
@@ -1134,7 +1196,8 @@ def master_upsert(kind, item, actor="human"):
         _mwrite(g)
         out = dict(row)
         if kind == "process":
-            out["node"] = _mparent(g, mid)   # UI 편의: 부모 node 함께
+            out["node"] = _mparent(g, mid)          # UI 편의: 주(primary) 부모
+            out["nodes"] = _mparents(g, mid)        # UI 편의: 부모 전체(주 먼저)
         return out, None
 
 

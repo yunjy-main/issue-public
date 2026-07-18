@@ -800,6 +800,10 @@ def handle_step(body):
                 for k in ("node", "label"):
                     if row.get(k):
                         item[k] = row[k]
+                if row.get("nodes"):            # M:N — 소속 node 다중(주=primary_node 또는 첫째)
+                    item["nodes"] = row["nodes"]
+                if row.get("primary_node"):
+                    item["primary_node"] = row["primary_node"]
                 item["aliases"] = row.get("aliases") or []
             elif op == "update":
                 ch = row.get("changes") or {}
@@ -809,6 +813,8 @@ def handle_step(body):
                     item["label"] = ch["label"].get("to")
                 if isinstance(ch.get("node"), dict):
                     item["node"] = ch["node"].get("to")
+                if ch.get("nodes_add"):        # M:N — 부가 node 추가
+                    item["nodes_add"] = ch["nodes_add"]
             else:
                 continue
             r, err = store.master_upsert(typ, item, actor)

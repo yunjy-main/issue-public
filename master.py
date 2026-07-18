@@ -35,12 +35,26 @@ def find(graph, mid, kind=None):
 
 
 def parent_of(graph, mid, rel="narrower_of"):
-    """graph에서 mid의 부모(to) id — active 관계만."""
+    """graph에서 mid의 주(primary) 부모(to) id — active만. M:N이라도 승격은 주 부모 1개로(결정론)."""
+    fb = None
     for r in graph.get("relations", []) or []:
         if (r.get("state", "active") == "active" and r.get("rel") == rel
                 and str(r.get("from", "")).lower() == str(mid).lower()):
-            return r.get("to")
-    return None
+            if r.get("primary"):
+                return r.get("to")
+            if fb is None:
+                fb = r.get("to")
+    return fb
+
+
+def parents_of(graph, mid, rel="narrower_of"):
+    """mid의 부모(to) id 전체 — 주(primary) 먼저(M:N 표시용)."""
+    prim, rest = [], []
+    for r in graph.get("relations", []) or []:
+        if (r.get("state", "active") == "active" and r.get("rel") == rel
+                and str(r.get("from", "")).lower() == str(mid).lower()):
+            (prim if r.get("primary") else rest).append(r.get("to"))
+    return prim + rest
 
 
 # ---------- 별칭 매처 (결정론) ----------
