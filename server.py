@@ -136,7 +136,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"meta": meta, "content": body})
         elif path in ("/api/runs", "/api/run", "/api/run_status", "/api/source_text",
                       "/api/entities", "/api/relations", "/api/sources", "/api/stats",
-                      "/api/vocabulary", "/api/master", "/api/engines", "/api/history"):
+                      "/api/vocabulary", "/api/master", "/api/job", "/api/engines", "/api/history"):
             # 저장소 조회 예외를 격리 — 손상 파일 하나가 커넥션을 끊지 않도록 JSON 500
             try:
                 if path == "/api/run_status":
@@ -190,6 +190,12 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"stats": store.stats()})
                 elif path == "/api/vocabulary":
                     self._json({"vocabulary": store.load_vocab()})
+                elif path == "/api/job":   # 범용 비동기 작업 폴링(자연어 CRUD 등)
+                    q = urllib.parse.parse_qs(parsed.query)
+                    jid = (q.get("id") or [""])[0]
+                    j = store.job_get(jid) if re.fullmatch(r"JOB-\d{4,}", jid) else None
+                    self._json(j if j is not None else {"error": "job not found", "code": "E-1002"},
+                               200 if j is not None else 404)
                 elif path == "/api/master":   # 기준정보 — 일반 entity{kind}+relation 그래프
                     full = store.get_master(include_deleted=True)
                     self._json({"master": store.get_master(),

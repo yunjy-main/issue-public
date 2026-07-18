@@ -51,6 +51,88 @@ def _miss_msg(miss):
     return "마스터에 없는 좌표: " + ", ".join("%s=%s" % (m["kind"], m["id"]) for m in miss)
 
 
+def _run_master_crud_plan(text, guide):
+    """기준정보 자연어 CRUD 계획(원문+가이드 → LLM 해석 → 결정론 대조). 비동기 worker에서 호출.
+    현실 시드는 정형이 아니므로 해석은 LLM, 대조·계획은 결정론(seed_plan/store)."""
+    import master as master_mod
+    cur = store.get_master()
+    res = llm.master_crud_plan(text, guide, cur)   # llm.LLMError 가능
+    plan = master_mod.seed_plan(cur, res["items"])
+    for d in res.get("deletes") or []:
+        row = {"op": "delete", "type": d["type"], "id": d["id"], "evidence": d.get("evidence")}
+        imp = store.master_impact(d["type"], d["id"])
+        if not store.master_find(store.get_master(include_deleted=True), d["id"], d["type"]):
+            row["warn"] = "마스터에 없는 항목 — 삭제 대상 아님"
+        elif imp["refs"] or imp["children"]:
+            row["warn"] = "참조 %d건%s — 강제 삭제만 가능" % (
+                imp["refs"], (" · 하위 %d" % len(imp["children"])) if imp["children"] else "")
+        plan.append(row)
+    by = {(it["type"], it["id"]): it for it in res["items"]}
+    for p in plan:
+        src = by.get((p.get("type"), p.get("id")))
+        if src:
+            p["evidence"] = src.get("evidence"); p["confidence"] = src.get("confidence")
+    return {"format": "llm", "errors": [], "items": res["items"],
+            "unresolved": res.get("unresolved") or [], "plan": plan}
+
+
+def _run_issue_crud_plan(text, guide):
+    """이슈 자연어 CRUD 계획. LLM은 '무엇이 이슈인가'만, 좌표해소·needs_master는 결정론. 비동기 worker용."""
+    import master as master_mod
+    import links
+    issues = [e for e in store.list_entities() if e.get("type") == "issue"]
+    res = llm.issue_crud_plan(text, guide, issues, store.get_master())   # llm.LLMError 가능
+    mg = store.get_master()
+    text_coords = master_mod.resolve(text, mg)["coordinates"]
+    text_urls = links.extract_links(text)
+    by_id = {e["id"].lower(): e for e in issues}
+    plan = []
+    for it in res["items"]:
+        op = it.get("op")
+        if op == "create":
+            coords = _resolve_coords_det(it)
+            for k in ("node", "process", "product", "project"):
+                if not coords.get(k):
+                    coords[k] = text_coords.get(k)
+            row = {"op": "create", "title": it.get("title"), "summary": it.get("summary"),
+                   "coordinates": coords, "status": it.get("status"), "severity": it.get("severity"),
+                   "start_date": it.get("start_date"), "deadline": it.get("deadline"),
+                   "urls": text_urls, "evidence": it.get("evidence"), "confidence": it.get("confidence")}
+            miss = _coord_missing(coords)
+            if not (it.get("title") or "").strip():
+                row["warn"] = "제목 없음"
+            elif miss:
+                row["warn"] = _miss_msg(miss)
+            plan.append(row)
+        elif op in ("update", "delete"):
+            tgt = by_id.get(str(it.get("id", "")).lower())
+            row = {"op": op, "id": it.get("id"), "evidence": it.get("evidence"),
+                   "confidence": it.get("confidence")}
+            if not tgt:
+                row["op"] = "skip"; row["warn"] = "등록된 이슈 아님 — 건너뜀"
+            elif op == "update":
+                patch = {}
+                for k in ("title", "summary", "status", "severity", "start_date", "deadline"):
+                    if it.get(k) and it.get(k) != tgt.get(k):
+                        patch[k] = it[k]
+                rc = _resolve_coords_det(it)
+                for k in ("node", "process", "product", "project"):
+                    if rc.get(k) and rc.get(k) != tgt.get(k):
+                        patch[k] = rc[k]
+                row["patch"] = patch; row["title"] = tgt.get("title")
+                miss = _coord_missing({k: patch.get(k) for k in ("node", "process", "product", "project")})
+                if not patch:
+                    row["op"] = "skip"; row["warn"] = "변경 없음"
+                elif miss:
+                    row["warn"] = _miss_msg(miss)
+            else:
+                row["title"] = tgt.get("title")
+            plan.append(row)
+    nm = [{"surface": c["surface"], "why": "마스터에 없음 — 기준정보 먼저 등록"}
+          for c in master_mod.find_unknown_candidates(text, mg)]
+    return {"plan": plan, "needs_master": nm, "unresolved": res.get("unresolved") or []}
+
+
 def _resolve_coords_det(item):
     """LLM이 준 좌표 표기(별칭일 수 있음)+evidence+title을 **결정론 리졸버로 정준화**한다.
     LLM은 '무엇이 이슈인가'만 해석하고, 좌표 표면형→정준 id 해소는 master.resolve가 한다
@@ -676,39 +758,28 @@ def handle_step(body):
     if step == "MASTER_IMPACT":   # 삭제 전 영향도 미리보기
         return ok(store.master_impact(inp.get("mtype"), inp.get("id")), ["MASTER_DELETE", "STOP"])
 
-    if step == "MASTER_SEED_PLAN":   # 원문(아무 형식)+가이드 → LLM 해석 → 결정론 대조 → 계획(적용 안 함)
-        # 현실의 시드는 정형이 아니다(엑셀 붙여넣기·메일·자유문장). 정형으로 만드는 공수가 더 크므로
-        # **해석은 LLM**이 하고, 기존 마스터와의 **대조·계획·적용은 결정론**(seed_plan/store)이 한다.
-        import master as master_mod
+    if step == "MASTER_SEED_PLAN":   # 원문+가이드 → LLM 해석 → 결정론 계획. **비동기**(프록시 타임아웃·새로고침 대응)
         text = inp.get("text") or ""
         if not text.strip():
             raise StepError("E-1001", "원문이 비었습니다", 400)
-        cur = store.get_master()
-        try:
-            res = llm.master_crud_plan(text, inp.get("guide"), cur)
-        except llm.LLMError as e:
-            raise StepError(e.code, str(e), 502)
-        plan = master_mod.seed_plan(cur, res["items"])   # 결정론 대조: create/update/skip
-        for d in res.get("deletes") or []:               # 삭제는 별도 계획 행 + 영향도 미리보기
-            row = {"op": "delete", "type": d["type"], "id": d["id"], "evidence": d.get("evidence")}
-            imp = store.master_impact(d["type"], d["id"])
-            if not store.master_find(store.get_master(include_deleted=True), d["id"], d["type"]):
-                row["warn"] = "마스터에 없는 항목 — 삭제 대상 아님"
-            elif imp["refs"] or imp["children"]:
-                row["warn"] = "참조 %d건%s — 강제 삭제만 가능" % (
-                    imp["refs"], (" · 하위 %d" % len(imp["children"])) if imp["children"] else "")
-            plan.append(row)
-        by = {}
-        for it in res["items"]:
-            by[(it["type"], it["id"])] = it
-        for p in plan:   # 계획 행에 근거·확신도를 실어 사람이 판단할 수 있게
-            src = by.get((p.get("type"), p.get("id")))
-            if src:
-                p["evidence"] = src.get("evidence")
-                p["confidence"] = src.get("confidence")
-        return ok({"format": "llm", "errors": [], "items": res["items"],
-                   "unresolved": res.get("unresolved") or [], "plan": plan},
-                  ["MASTER_SEED_APPLY", "STOP"])
+        guide = inp.get("guide")
+        jid = store.job_start("master_crud")
+
+        def _w():
+            try:
+                store.job_finish(jid, _run_master_crud_plan(text, guide))
+            except (StepError, llm.LLMError) as e:
+                store.job_error(jid, getattr(e, "code", "E-2001"), str(e))
+            except Exception as e:  # noqa
+                store.job_error(jid, "E-5000", type(e).__name__ + ": " + str(e))
+        threading.Thread(target=_w, daemon=True).start()
+        return ok({"job_id": jid, "status": "RUNNING"}, ["JOB_GET", "STOP"])
+
+    if step == "JOB_GET":   # 범용 비동기 작업 폴링 (자연어 CRUD 등)
+        j = store.job_get(inp.get("id"))
+        if j is None:
+            raise StepError("E-1002", "작업 없음: %s" % inp.get("id"), 404)
+        return ok(j, ["JOB_GET", "STOP"])
 
     if step == "MASTER_SEED_APPLY":   # 사람이 고른 계획만 적용 → 전통 CRUD와 동일 저장 경로
         actor = inp.get("actor", "human")
@@ -798,69 +869,22 @@ def handle_step(body):
         e = store.create_entity("issue", f, inp.get("actor", "human"))
         return ok({"entity": e}, ["ISSUE_CREATE", "ENTITY_EDIT", "STOP"])
 
-    if step == "ISSUE_CRUD_PLAN":   # 자연어: 원문+가이드 → LLM 해석 → 결정론 대조 계획
+    if step == "ISSUE_CRUD_PLAN":   # 자연어: 원문+가이드 → LLM 해석 → 결정론 계획. **비동기**(프록시·새로고침 대응)
         text = inp.get("text") or ""
         if not text.strip():
             raise StepError("E-1001", "원문이 비었습니다", 400)
-        issues = [e for e in store.list_entities() if e.get("type") == "issue"]
-        try:
-            res = llm.issue_crud_plan(text, inp.get("guide"), issues, store.get_master())
-        except llm.LLMError as e:
-            raise StepError(e.code, str(e), 502)
-        import master as master_mod
-        import links
-        mg = store.get_master()
-        text_coords = master_mod.resolve(text, mg)["coordinates"]   # 입력 원문의 결정론 좌표(별칭→정준·승격)
-        text_urls = links.extract_links(text)   # 원문의 Jira·Confluence·EDM 링크(결정론)
-        by_id = {e["id"].lower(): e for e in issues}
-        plan = []
-        for it in res["items"]:
-            op = it.get("op")
-            if op == "create":
-                coords = _resolve_coords_det(it)   # item(evidence/title) 결정론 해소
-                for k in ("node", "process", "product", "project"):   # 빠진 건 원문 전체 해소로 보완
-                    if not coords.get(k):
-                        coords[k] = text_coords.get(k)
-                row = {"op": "create", "title": it.get("title"), "summary": it.get("summary"),
-                       "coordinates": coords, "status": it.get("status"), "severity": it.get("severity"),
-                       "start_date": it.get("start_date"), "deadline": it.get("deadline"),
-                       "urls": text_urls, "evidence": it.get("evidence"), "confidence": it.get("confidence")}
-                miss = _coord_missing(coords)
-                if not (it.get("title") or "").strip():
-                    row["warn"] = "제목 없음"
-                elif miss:
-                    row["warn"] = _miss_msg(miss)
-                plan.append(row)
-            elif op in ("update", "delete"):
-                tgt = by_id.get(str(it.get("id", "")).lower())
-                row = {"op": op, "id": it.get("id"), "evidence": it.get("evidence"),
-                       "confidence": it.get("confidence")}
-                if not tgt:
-                    row["op"] = "skip"; row["warn"] = "등록된 이슈 아님 — 건너뜀"
-                elif op == "update":
-                    patch = {}
-                    for k in ("title", "summary", "status", "severity", "start_date", "deadline"):
-                        if it.get(k) and it.get(k) != tgt.get(k):
-                            patch[k] = it[k]
-                    rc = _resolve_coords_det(it)   # 좌표 변경도 결정론 해소
-                    for k in ("node", "process", "product", "project"):
-                        if rc.get(k) and rc.get(k) != tgt.get(k):
-                            patch[k] = rc[k]
-                    row["patch"] = patch; row["title"] = tgt.get("title")
-                    miss = _coord_missing({k: patch.get(k) for k in ("node", "process", "product", "project")})
-                    if not patch:
-                        row["op"] = "skip"; row["warn"] = "변경 없음"
-                    elif miss:
-                        row["warn"] = _miss_msg(miss)
-                else:   # delete
-                    row["title"] = tgt.get("title")
-                plan.append(row)
-        # needs_master는 **결정론**으로(LLM 판단은 비일관): 원문에서 좌표처럼 보이나 마스터에 없는 토큰.
-        # (추출 게이트와 동일 방식 — 좌표 해소·미등록 판정은 LLM이 아니라 리졸버의 일)
-        nm = [{"surface": c["surface"], "why": "마스터에 없음 — 기준정보 먼저 등록"}
-              for c in master_mod.find_unknown_candidates(text, mg)]
-        return ok({"plan": plan, "needs_master": nm,
-                   "unresolved": res.get("unresolved") or []}, ["ISSUE_CRUD_APPLY", "STOP"])
+        guide = inp.get("guide")
+        jid = store.job_start("issue_crud")
+
+        def _w():
+            try:
+                store.job_finish(jid, _run_issue_crud_plan(text, guide))
+            except (StepError, llm.LLMError) as e:
+                store.job_error(jid, getattr(e, "code", "E-2001"), str(e))
+            except Exception as e:  # noqa
+                store.job_error(jid, "E-5000", type(e).__name__ + ": " + str(e))
+        threading.Thread(target=_w, daemon=True).start()
+        return ok({"job_id": jid, "status": "RUNNING"}, ["JOB_GET", "STOP"])
 
     if step == "ISSUE_CRUD_APPLY":   # 사람이 고른 계획만 적용 → 전통 create/edit/trash 저장 경로
         actor = inp.get("actor", "human")

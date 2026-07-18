@@ -927,6 +927,18 @@ async function apiPost(body){
   if(!r.ok)throw Object.assign(new Error(j.error||("HTTP "+r.status)),{code:j.code});
   return j;
 }
+const _sleep=ms=>new Promise(r=>setTimeout(r,ms));
+// 범용 비동기 작업 폴링 — 긴 LLM 스텝(자연어 CRUD 등)을 짧은 요청으로 반복 조회(프록시 타임아웃 회피).
+// 결과 job(done/error)을 반환. 폴링 요청은 짧아 _global 프록시가 끊지 않는다.
+async function pollJob(jobId){
+  for(let i=0;i<450;i++){   // ~450 × 2s = 15분 상한
+    let j=null;
+    try{j=await api("api/job?id="+encodeURIComponent(jobId));}catch(e){await _sleep(2000);continue;}
+    if(j&&(j.state==="done"||j.state==="error"))return j;
+    await _sleep(2000);
+  }
+  return {state:"error",code:"E-TIMEOUT",error:"폴링 시간 초과(서버는 계속 처리 중일 수 있음)"};
+}
 function setRunMsg(m,err){$("#runMsg").innerHTML=err?`<span class="err">${esc(m)}</span>`:esc(m);}
 function toast(msg){let t=document.getElementById("toast");
   if(!t){t=document.createElement("div");t.id="toast";document.body.appendChild(t);}
@@ -1907,19 +1919,37 @@ async function openIssueNL(force){
     <div id="issPlanPanel"></div></div>`;
   $("#issNLText").value=s.text||"";$("#issNLGuide").value=s.guide||"";
   state.issPlan=s.plan||null;
-  $("#issPlanPanel").innerHTML=issNLPlanHtml();   // 저장된 계획이 있으면 복원
+  $("#issPlanPanel").innerHTML=(s.running&&s.jobId)?issRunningHtml():issNLPlanHtml();   // 진행중/저장계획 복원
   state.issNL=state.issNL||{};state.issNL.open=true;saveIssNL();
+  if(s.running&&s.jobId)runIssJob();   // 진행중이던 작업 이어서 폴링(새로고침 복원)
 }
+const issRunningHtml=()=>'<div class="ent-empty">LLM이 해석하는 중… <span class="dim">(진행중 — 새로고침·이동해도 유지됩니다)</span></div>';
 async function issuePlan(){
   const text=$("#issNLText").value, guide=$("#issNLGuide").value;
   if(!text.trim()){alert("원문/지시를 입력하세요.");return;}
-  $("#issPlanPanel").innerHTML='<div class="ent-empty">LLM이 해석하는 중…</div>';
-  try{
-    const r=(await apiPost({step:"ISSUE_CRUD_PLAN",input:{text,guide:guide||undefined}})).result;
-    state.issNL={open:true,text,guide,plan:r.plan||[],needs_master:r.needs_master||[],unresolved:r.unresolved||[]};
+  // 비동기: 서버가 즉시 job_id 반환 → 백그라운드 LLM → 짧은 폴링(프록시 타임아웃 회피). 진행중 상태 보존.
+  let start;
+  try{start=(await apiPost({step:"ISSUE_CRUD_PLAN",input:{text,guide:guide||undefined}})).result;}
+  catch(e){$("#issPlanPanel").innerHTML=`<div class="plan-err">계획 생성 실패: ${esc((e.code?e.code+" ":"")+e.message)}</div>`;return;}
+  state.issNL={open:true,text,guide,jobId:start.job_id,running:true,plan:null,needs_master:[],unresolved:[]};
+  state.issPlan=null;saveIssNL();
+  runIssJob();
+}
+async function runIssJob(){
+  const s=state.issNL;if(!s||!s.jobId||!s.running)return;
+  const jobId=s.jobId;
+  if($("#issPlanPanel"))$("#issPlanPanel").innerHTML=issRunningHtml();
+  const j=await pollJob(jobId);
+  if(!state.issNL||state.issNL.jobId!==jobId)return;   // 그 사이 새 계획으로 대체됨 → 무시
+  if(j.state==="done"){
+    const r=j.result||{};
+    state.issNL={open:true,text:s.text,guide:s.guide,plan:r.plan||[],needs_master:r.needs_master||[],unresolved:r.unresolved||[]};
     state.issPlan=state.issNL.plan;saveIssNL();
-    $("#issPlanPanel").innerHTML=issNLPlanHtml();
-  }catch(e){$("#issPlanPanel").innerHTML=`<div class="plan-err">계획 생성 실패: ${esc((e.code?e.code+" ":"")+e.message)}</div>`;}
+    if($("#issPlanPanel"))$("#issPlanPanel").innerHTML=issNLPlanHtml();
+  }else{
+    state.issNL.running=false;saveIssNL();
+    if($("#issPlanPanel"))$("#issPlanPanel").innerHTML=`<div class="plan-err">계획 생성 실패: ${esc((j.code?j.code+" ":"")+(j.error||"오류"))}</div>`;
+  }
 }
 async function issueApply(){
   const picked=[];document.querySelectorAll('#issPlanPanel [data-issix]').forEach(cb=>{if(cb.checked)picked.push(state.issPlan[+cb.dataset.issix]);});
@@ -2106,24 +2136,41 @@ function mstPlanHtml(){
     +s.unresolved.map(u=>`· ${esc(u.text||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
   return h;
 }
-function restoreMstNL(){   // mst 탭 표시 시 보존된 계획 복원
-  const s=state.mst;if(!s||!(s.text||s.plan))return;
+const mstRunningHtml=()=>'<div class="ent-empty">LLM이 해석하는 중… <span class="dim">(진행중 — 새로고침·이동해도 유지됩니다)</span></div>';
+function restoreMstNL(){   // mst 탭 표시 시 보존된 계획/진행중 복원
+  const s=state.mst;if(!s||!(s.text||s.plan||s.jobId))return;
   const panel=$("#mstSeedPanel");if(panel)panel.hidden=false;
   if($("#mstSeedText"))$("#mstSeedText").value=s.text||"";
   if($("#mstGuide"))$("#mstGuide").value=s.guide||"";
   state.mstPlan=s.plan||null;
-  if($("#mstPlanPanel"))$("#mstPlanPanel").innerHTML=mstPlanHtml();
+  if($("#mstPlanPanel"))$("#mstPlanPanel").innerHTML=(s.running&&s.jobId)?mstRunningHtml():mstPlanHtml();
+  if(s.running&&s.jobId)runMstJob();   // 진행중이던 작업 이어서 폴링
 }
 async function mstPlan(){
   const text=$("#mstSeedText").value, guide=$("#mstGuide").value;
   if(!text.trim()){alert("원문(붙여넣기 또는 자연어 지시)을 입력하세요.");return;}
-  $("#mstPlanPanel").innerHTML='<div class="ent-empty">LLM이 해석하는 중… (사내 LLM 응답 시간만큼)</div>';
-  try{
-    const r=(await apiPost({step:"MASTER_SEED_PLAN",input:{text,guide:guide||undefined}})).result;
-    state.mst={open:true,text,guide,plan:r.plan||[],items:r.items||[],unresolved:r.unresolved||[]};
+  let start;
+  try{start=(await apiPost({step:"MASTER_SEED_PLAN",input:{text,guide:guide||undefined}})).result;}
+  catch(e){$("#mstPlanPanel").innerHTML=`<div class="plan-err">계획 생성 실패: ${esc((e.code?e.code+" ":"")+e.message)}</div>`;return;}
+  state.mst={open:true,text,guide,jobId:start.job_id,running:true,plan:null,items:[],unresolved:[]};
+  state.mstPlan=null;saveMstNL();
+  runMstJob();
+}
+async function runMstJob(){
+  const s=state.mst;if(!s||!s.jobId||!s.running)return;
+  const jobId=s.jobId;
+  if($("#mstPlanPanel"))$("#mstPlanPanel").innerHTML=mstRunningHtml();
+  const j=await pollJob(jobId);
+  if(!state.mst||state.mst.jobId!==jobId)return;
+  if(j.state==="done"){
+    const r=j.result||{};
+    state.mst={open:true,text:s.text,guide:s.guide,plan:r.plan||[],items:r.items||[],unresolved:r.unresolved||[]};
     state.mstPlan=state.mst.plan;saveMstNL();
-    $("#mstPlanPanel").innerHTML=mstPlanHtml();
-  }catch(e){$("#mstPlanPanel").innerHTML=`<div class="plan-err">계획 생성 실패: ${esc((e.code?e.code+" ":"")+e.message)}</div>`;}
+    if($("#mstPlanPanel"))$("#mstPlanPanel").innerHTML=mstPlanHtml();
+  }else{
+    state.mst.running=false;saveMstNL();
+    if($("#mstPlanPanel"))$("#mstPlanPanel").innerHTML=`<div class="plan-err">계획 생성 실패: ${esc((j.code?j.code+" ":"")+(j.error||"오류"))}</div>`;
+  }
 }
 async function mstApply(){
   const picked=[];

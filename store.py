@@ -20,6 +20,7 @@ DIRS = {
     "state": os.path.join(K, "state"),
     "master": os.path.join(K, "master"),   # 기준정보(사람이 만드는 좌표축)
     "docs": os.path.join(K, "docs_struct"),   # STRUCTURE 산출물(구조화 문서)
+    "jobs": os.path.join(K, "jobs"),   # 범용 비동기 작업(긴 LLM 스텝: 자연어 CRUD 등)
 }
 KST = timezone(timedelta(hours=9))
 _LOCK = threading.RLock()   # 쓰기/읽기 모두 이 락 하에서 파일 접근 (win32 os.replace 경합 방지)
@@ -474,6 +475,37 @@ def save_proposal(run_id, source_id, proposal, producer, extra=None):
 def get_proposal(run_id):
     with _LOCK:
         return _read_json(os.path.join(DIRS["proposals"], run_id, "proposal.json"))
+
+
+# ---------- 범용 비동기 작업(job) — 긴 LLM 스텝(자연어 CRUD 등)의 프록시 타임아웃·새로고침 대응 ----------
+# EXTRACT의 job.json(RUN 종속)과 별개. JOB-nnnnnn 하나로 임의 스텝의 진행/결과를 담는다.
+def job_start(kind, meta=None):
+    with _LOCK:
+        jid = next_id("JOB")
+        obj = {"id": jid, "kind": kind, "state": "running", "started_at": now_iso()}
+        if meta is not None:
+            obj["meta"] = meta
+        _atomic_write(os.path.join(DIRS["jobs"], jid + ".json"), json.dumps(obj, ensure_ascii=False))
+        return jid
+
+
+def job_finish(jid, result):
+    with _LOCK:
+        j = _read_json(os.path.join(DIRS["jobs"], jid + ".json")) or {"id": jid}
+        j.update({"state": "done", "result": result, "finished_at": now_iso()})
+        _atomic_write(os.path.join(DIRS["jobs"], jid + ".json"), json.dumps(j, ensure_ascii=False))
+
+
+def job_error(jid, code, error):
+    with _LOCK:
+        j = _read_json(os.path.join(DIRS["jobs"], jid + ".json")) or {"id": jid}
+        j.update({"state": "error", "code": code, "error": error, "finished_at": now_iso()})
+        _atomic_write(os.path.join(DIRS["jobs"], jid + ".json"), json.dumps(j, ensure_ascii=False))
+
+
+def job_get(jid):
+    with _LOCK:
+        return _read_json(os.path.join(DIRS["jobs"], jid + ".json"))
 
 
 # ---------- 비동기 EXTRACT 작업 상태 (job.json) ----------
