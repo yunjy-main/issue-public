@@ -286,6 +286,10 @@
   .ev-tog:hover{color:var(--bad);border-color:var(--bad)}
   .ev-meta{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:2px}
   .ev-ev{font-size:10.5px;color:var(--muted);margin-top:2px;font-style:italic}
+  .ev-edit{margin-top:4px;display:flex;flex-direction:column;gap:3px;padding:4px;border:1px dashed var(--accent);border-radius:4px}
+  .ev-edit .ed{font:inherit;font-size:11.5px;background:var(--bg);color:var(--fg);border:1px solid var(--accent);border-radius:4px;padding:2px 6px}
+  .ev-coords{display:grid;grid-template-columns:repeat(2,1fr);gap:3px}
+  .ev-tog[data-evedit]:hover{color:var(--accent);border-color:var(--accent)}
   .ev-link{font-size:11px;margin-top:3px;padding-top:3px;border-top:1px dashed var(--border)}
   .ev-link.ev-rej{opacity:.5;text-decoration:line-through}
   .ev-link a{font-weight:600}
@@ -1160,9 +1164,10 @@ async function commitEvents(run){
   const b=document.getElementById("rb-"+run.runId);const btn=b&&b.querySelector('.rb-commit-btn');
   if(btn){btn.disabled=true;btn.innerHTML="확정 중…";}
   try{
-    const rv=run.evReviews||{};
+    const rv=run.evReviews||{},ed=run.evEdits||{};
+    const events=(run.events||[]).map(ev=>{const p=ed[ev.temp_id];return p?Object.assign({},ev,p):ev;});   // 편집 반영
     const links=((run.mapping&&run.mapping.links)||[]).filter(l=>rv["link:"+l.event]!=="reject");
-    const com=(await apiPost({step:"EVENT_COMMIT",input:{events:run.events,links,reviews:rv}})).result;
+    const com=(await apiPost({step:"EVENT_COMMIT",input:{events,links,reviews:rv}})).result;
     run.committed=true;
     run.commitMsg="사건 "+com.events.length+"·연결 "+com.links.length+(com.warnings.length?" ·경고 "+com.warnings.length:"");
     updateRunBox(run);saveRuns();state.ents=null;
@@ -1178,6 +1183,15 @@ async function gateRecheck(runId){
       toast("아직 미등록 후보/충돌이 남아 있습니다");return;}
     toast("기준정보 해소 완료 — 사건 추출을 시작합니다");await startEvents(run);
   }catch(e){toast("재확인 실패: "+(e.code?e.code+" ":"")+e.message);}
+}
+// 재검토 — 같은 원문(source)으로 전처리·기준정보·추출을 처음부터 다시. gate/error/review 어디서든.
+async function runRedo(runId){
+  const run=findRun(runId);if(!run||!run.sourceId)return;
+  run.status="running";run.phase="structure";run.committed=false;
+  run.events=null;run.mapping=null;run.evReviews={};run.evEdits={};run.error=null;run._t0=Date.now();
+  updateRunBox(run);saveRuns();
+  setRunMsg(run.runId+" — 원문으로 재검토 중…");
+  await preflight(run);
 }
 // 게이트 우회: 이번 건은 기준정보 없이 진행(좌표 일부가 비게 됨 — 데드락 방지용 명시적 선택)
 async function gateIgnore(runId){
@@ -1301,23 +1315,34 @@ function runStagesHtml(run){
 }
 // 사건 검토 UI(게이트2) — 추출된 사건 + 이슈 매핑 제안. 각 항목 제외 토글, 확정 시 EVENT_COMMIT.
 const EV_KIND_CLS={실패:"evk-fail",원인:"evk-cause",조치:"evk-act",결정:"evk-dec",요청:"evk-req",공지:"evk-notice",관찰:"evk-obs"};
+const EV_KINDS=["관찰","실패","원인","조치","결정","요청","공지"];
 function runEventsHtml(run){
   const evs=run.events||[],mp=run.mapping||{links:[],unmapped:[],issue_proposals:[]},rv=run.evReviews||{};
   const linkByEv={};(mp.links||[]).forEach(l=>{linkByEv[l.event]=l;});
   if(!evs.length)return `<div class="ent-empty">추출된 사건 없음 (원문에 사건이 없거나 좌표 미확정)</div>`;
   let h=`<div class="ev-list">`;
   evs.forEach(ev=>{
-    const rej=rv[ev.temp_id]==="reject",link=linkByEv[ev.temp_id];
-    const coord=["node","process","product","project"].map(k=>ev[k]).filter(Boolean).join("/");
-    const lrej=rv["link:"+ev.temp_id]==="reject";
+    const tid=ev.temp_id;
+    const rej=rv[tid]==="reject",link=linkByEv[tid],lrej=rv["link:"+tid]==="reject";
+    const ed=(run.evEditOpen||{})[tid],pt=(run.evEdits||{})[tid]||{};
+    const val=k=>pt[k]!=null?pt[k]:(ev[k]!=null?ev[k]:"");   // 편집값 우선
+    const kind=val("kind"),what=val("what");
+    const coord=["node","process","product","project"].map(k=>val(k)).filter(Boolean).join("/");
     h+=`<div class="ev-row${rej?' ev-rej':''}">
-      <div class="ev-head"><span class="ev-kind ${EV_KIND_CLS[ev.kind]||''}">${esc(ev.kind||'')}</span>
-        <b class="ev-what">${esc(ev.what||'')}</b>
-        <span class="ev-tog" data-evrej="${escAttr(ev.temp_id)}">${rej?'↩ 되살리기':'✕ 제외'}</span></div>
-      <div class="ev-meta">${coord?esc(coord)+' · ':''}${ev.occurred_at?esc(ev.occurred_at)+' · ':''}${ev.who?esc(ev.who)+' · ':''}${esc(ev.confidence||'')}</div>
+      <div class="ev-head"><span class="ev-kind ${EV_KIND_CLS[kind]||''}">${esc(kind||'')}</span>
+        <b class="ev-what">${esc(what||'')}</b>
+        <span class="ev-tog" data-evedit="${escAttr(tid)}">${ed?'▾ 닫기':'✎ 편집'}</span>
+        <span class="ev-tog" data-evrej="${escAttr(tid)}">${rej?'↩ 되살리기':'✕ 제외'}</span></div>
+      <div class="ev-meta">${coord?esc(coord)+' · ':''}${val("occurred_at")?esc(val("occurred_at"))+' · ':''}${ev.who?esc(ev.who)+' · ':''}${esc(ev.confidence||'')}</div>
       ${ev.evidence?`<div class="ev-ev">"${esc(ev.evidence)}"</div>`:''}
+      ${ed?`<div class="ev-edit">
+        <select class="ed" data-eved="kind" data-evtid="${escAttr(tid)}">${EV_KINDS.map(k=>`<option ${kind===k?'selected':''}>${k}</option>`).join("")}</select>
+        <input class="ed" data-eved="what" data-evtid="${escAttr(tid)}" value="${escAttr(what)}" placeholder="사건 내용(what)">
+        <div class="ev-coords">${["node","process","product","project"].map(k=>`<input class="ed" data-eved="${k}" data-evtid="${escAttr(tid)}" value="${escAttr(val(k))}" placeholder="${k}">`).join("")}</div>
+        <span class="dim">좌표는 기준정보에 있는 값으로. 저장은 확정(COMMIT) 시.</span>
+      </div>`:''}
       ${link?`<div class="ev-link${lrej?' ev-rej':''}">→ <a href="#e/${escAttr(link.issue)}">${esc(link.issue)}</a> 연결 <span class="dim">${esc(link.rationale||'')}</span>
-        <span class="ev-tog" data-linkrej="${escAttr(ev.temp_id)}">${lrej?'↩ 연결 되살리기':'✕ 연결 제외'}</span></div>`
+        <span class="ev-tog" data-linkrej="${escAttr(tid)}">${lrej?'↩ 연결 되살리기':'✕ 연결 제외'}</span></div>`
         :`<div class="ev-link dim">→ 연결된 이슈 없음(미매핑) — 확정하면 이슈 없이 사건만 저장</div>`}
     </div>`;
   });
@@ -1474,6 +1499,14 @@ function runGateHtml(run){
     </div></div>`;
   return h;
 }
+// 모든 run 상태에서 원문·재검토를 쓸 수 있게 하는 공용 액션행(+ 원문 표시 컨테이너).
+// redo=true면 🔄재검토(같은 원문으로 전처리·추출 재실행). sourceId 없으면 비움.
+function runActionsHtml(run, redo){
+  if(!run.sourceId)return '';
+  const redoBtn=redo?` · <button class="rb-src-btn" data-runredo="${escAttr(run.runId)}" title="같은 원문으로 다시 전처리·추출">🔄 재검토</button>`:'';
+  return `<div class="rb-meta"><button class="rb-src-btn" data-runsrc="${escAttr(run.runId)}">📄 원문</button>${redoBtn}</div>`
+    +`<div id="runRaw-${escAttr(run.runId)}" class="run-raw"></div>`;
+}
 function runBoxHtml(run){
   const st=run.status;
   const badge=st==="gate"?'<span class="rb-status gate">기준정보 검토</span>'
@@ -1482,22 +1515,21 @@ function runBoxHtml(run){
     :run.committed?'<span class="rb-status committed">확정됨</span>'
     :'<span class="rb-status done">검토대기</span>';
   let body,commit="";
-  if(st==="gate"){body=runPreHtml(run)+runGateHtml(run);}
-  else if(st==="running"){body=runPreHtml(run)+`<div class="rb-run">${run.flow==="event"?"사건 추출·이슈 매핑 중…":"추출 중…"} <span class="rb-timer" data-timer>0초</span> <span style="color:var(--muted)">(모델 판단 대기)</span></div>`;}
-  else if(st==="error"){body=`<div class="rb-err">${esc(run.error||'추출 실패')}</div>`+
+  if(st==="gate"){body=runActionsHtml(run,true)+runPreHtml(run)+runGateHtml(run);}
+  else if(st==="running"){body=runActionsHtml(run,false)+runPreHtml(run)+`<div class="rb-run">${run.flow==="event"?"사건 추출·이슈 매핑 중…":"추출 중…"} <span class="rb-timer" data-timer>0초</span> <span style="color:var(--muted)">(모델 판단 대기)</span></div>`;}
+  else if(st==="error"){body=runActionsHtml(run,true)+`<div class="rb-err">${esc(run.error||'추출 실패')}</div>`+
     `<div class="rb-actions"><button class="rb-retry" data-retry="${escAttr(run.runId)}">↻ 재시도</button></div>`;}
   else if(run.committed){   // 확정 후
     if(run.flow==="event"){
-      body=`<div class="rb-meta">확정 완료 — ${esc(run.commitMsg||'')} · <button class="rb-src-btn" data-runsrc="${escAttr(run.runId)}">📄 원문</button></div><div id="runRaw-${escAttr(run.runId)}" class="run-raw"></div>`;
+      body=`<div class="rb-meta">확정 완료 — ${esc(run.commitMsg||'')}</div>`+runActionsHtml(run,false);
     }else{   // 레거시 EXTRACT 복기
-      body=`<div class="rb-meta">확정 완료 — ${esc(run.commitMsg||'')} · <button class="rb-src-btn" data-runsrc="${escAttr(run.runId)}">📄 원문</button></div>`+
-        `<div id="runRaw-${escAttr(run.runId)}" class="run-raw"></div>`+
+      body=`<div class="rb-meta">확정 완료 — ${esc(run.commitMsg||'')}</div>`+runActionsHtml(run,false)+
         `<div class="rb-recap"><span class="rb-recap-tog" data-recap="${escAttr(run.runId)}">${run._recapOpen?'▾':'▸'} 커밋 당시 상태 (복기)</span>`+
         (run._recapOpen?`<div class="rb-recap-body">${recapHtml(run)}</div>`:'')+`</div>`;
     }
     commit=`<div class="rb-commit"><div class="rb-done">✓ 확정</div></div>`;
   }else if(run.flow==="event"&&st==="review"){   // 게이트2: 사건 검토 + 이슈 매핑
-    body=runPreHtml(run)+runEventsHtml(run);
+    body=runActionsHtml(run,true)+runPreHtml(run)+runEventsHtml(run);
     commit=`<div class="rb-commit"><button class="rb-commit-btn" data-evcommit="${escAttr(run.runId)}">확정<br>COMMIT</button></div>`;
   }else{   // 레거시: 후보 검토 + 확정
     body=runCandsHtml(run);
@@ -2862,6 +2894,8 @@ document.addEventListener("click",e=>{
   if(e.target.id==="btnDedupApply"){applyDedup();return;}
   const rsrc=e.target.closest("[data-runsrc]");
   if(rsrc){showRunSource(rsrc.dataset.runsrc);return;}
+  const rredo=e.target.closest("[data-runredo]");
+  if(rredo){runRedo(rredo.dataset.runredo);return;}
   const recap=e.target.closest("[data-recap]");
   if(recap){toggleRecap(recap.dataset.recap);return;}
   // ── 자연어 CRUD 항목별 검토/커밋/원문/복기 ──
@@ -2924,6 +2958,10 @@ document.addEventListener("click",e=>{
   // ── run-box 사건 검토(게이트2) ──
   const evc=e.target.closest("[data-evcommit]");
   if(evc){commitEvents(findRun(evc.dataset.evcommit));return;}
+  const eved=e.target.closest("[data-evedit]");
+  if(eved){const box=eved.closest(".run-box");const run=findRun(box.dataset.run);if(!run)return;
+    const t=eved.dataset.evedit;run.evEditOpen=run.evEditOpen||{};
+    run.evEditOpen[t]=!run.evEditOpen[t];saveRuns();updateRunBox(run);return;}
   const evr=e.target.closest("[data-evrej]");
   if(evr){const box=evr.closest(".run-box");const run=findRun(box.dataset.run);if(!run)return;
     const t=evr.dataset.evrej;run.evReviews=run.evReviews||{};
@@ -3002,6 +3040,13 @@ document.addEventListener("change",e=>{
     // 전면 재렌더하지 않고 해당 카드의 타입 배지만 갱신 — 재렌더가 포커스/입력을 삼키지 않도록.
     if(ed.dataset.ed==="type"){const b=cand.querySelector(".ty");
       if(b){b.textContent=ed.value;b.className="ty "+tyCls(ed.value);}}}
+  // 사건 edit 입력 — run.evEdits에 저장(재렌더 안 함, 포커스 유지). kind 변경은 배지만 갱신.
+  const eved=e.target.closest(".run-box [data-eved]");
+  if(eved){const box=eved.closest(".run-box");const run=findRun(box.dataset.run);if(run){
+    const t=eved.dataset.evtid;run.evEdits=run.evEdits||{};run.evEdits[t]=run.evEdits[t]||{};
+    run.evEdits[t][eved.dataset.eved]=eved.value;saveRuns();
+    if(eved.dataset.eved==="kind"){const row=eved.closest(".ev-row");const b=row&&row.querySelector(".ev-kind");
+      if(b){b.textContent=eved.value;b.className="ev-kind "+(EV_KIND_CLS[eved.value]||"");}}}}
   // 자연어 CRUD edit 입력 — 저장만(재렌더 안 함, 포커스 유지)
   const ced=e.target.closest("[data-cruded]");
   if(ced){const kind=ced.dataset.crudkind,i=+ced.dataset.crudix;
