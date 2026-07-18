@@ -1560,7 +1560,15 @@ async function restoreRuns(){
 }
 
 // 실행 중 박스의 타이머를 1초마다 갱신 (실시간 처리시간)
-setInterval(function(){(state.runs||[]).forEach(function(r){if(r.status==="running")updateRunTiming(r);});},1000);
+setInterval(function(){
+  (state.runs||[]).forEach(function(r){if(r.status==="running")updateRunTiming(r);});
+  [["issNL","issPlanPanel"],["mst","mstPlanPanel"]].forEach(function(pr){   // 자연어 CRUD 카드 타이머
+    var s=state[pr[0]];if(!(s&&s.running&&s.jobId&&s._t0))return;
+    var p=document.getElementById(pr[1]);if(!p)return;
+    var sec=Math.max(0,Math.round((Date.now()-s._t0)/1000));
+    p.querySelectorAll('[data-timer]').forEach(function(t){t.textContent=sec+"초";});
+  });
+},1000);
 
 /* ---------- 이슈 (끝단계: 정리된 리스트 → 세부 페이지) ---------- */
 const TYPE_ORDER=["issue","event","case","finding","action","initiative","pattern","context"];
@@ -1899,6 +1907,38 @@ function issNLPlanHtml(){
   if(nu)h+=`<div class="plan-err">미해소:<br>`+s.unresolved.map(u=>`· ${esc(u.text||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
   return h;
 }
+// ── 자연어 CRUD 진행상태 카드 — 입력>추출전송의 run-box와 동일한 UI(뱃지·단계 진행·타이머) ──
+// cfg={label, s, planInner}. s={text,guide,running,jobId,plan,error,_t0}. 상태를 한눈에: 해석중/검토대기/실패.
+function crudCardHtml(cfg){
+  const s=cfg.s||{};
+  const running=!!(s.running&&s.jobId), err=s.error, hasPlan=s.plan!=null;
+  const badge=running?'<span class="rb-status running">해석중</span>'
+    :err?'<span class="rb-status error">실패</span>'
+    :hasPlan?'<span class="rb-status done">검토대기</span>'
+    :'<span class="rb-status done">대기</span>';
+  const snip=esc((((s.text||"").replace(/\s+/g," ").trim()).slice(0,70))||"(입력 대기)");
+  const sec=(running&&s._t0)?Math.max(0,Math.round((Date.now()-s._t0)/1000)):0;
+  const arw='<span class="sarw">›</span>';
+  const llmStg=running?`<span class="stg run">LLM 해석 ⏳ <b data-timer>${sec}초</b></span>`
+    :err?'<span class="stg err">LLM 해석 ✗</span>'
+    :hasPlan?'<span class="stg ok">LLM 해석 ✓</span>':'<span class="stg wait">LLM 해석</span>';
+  const revStg=err?'':`${arw}<span class="stg wait">검토·적용${hasPlan?' 대기':''}</span>`;
+  const stages=`<span class="stg ok">입력 ✓</span>${arw}${llmStg}${revStg}`;
+  let body;
+  if(running)body=`<div class="rb-run">LLM이 해석하는 중… <span class="rb-timer" data-timer>${sec}초</span> <span style="color:var(--muted)">(진행중 — 새로고침·이동해도 유지)</span></div>`;
+  else if(err)body=`<div class="rb-err">계획 생성 실패: ${esc(err)}</div>`;
+  else body=cfg.planInner||'<div class="ent-empty">계획 없음</div>';
+  return `<div class="run-box crud-card">
+    <div class="rb-top"><span class="rb-id">${esc(cfg.label)}</span><span class="rb-src">${snip}</span>${badge}</div>
+    <div class="rb-stages">${stages}</div>
+    <div class="rb-main"><div class="rb-body">${body}</div></div></div>`;
+}
+function renderIssCard(){
+  const el=$("#issPlanPanel");if(!el)return;
+  const s=state.issNL;
+  if(!s||(!(s.running&&s.jobId)&&s.plan==null&&!s.error)){el.innerHTML="";return;}
+  el.innerHTML=crudCardHtml({label:"이슈 CRUD",s,planInner:s.plan!=null?issNLPlanHtml():""});
+}
 async function openIssueNL(force){
   const p=$("#issueCrudPanel");
   if(state.issueCrudOpen&&!force){   // 토글 닫기
@@ -1919,37 +1959,36 @@ async function openIssueNL(force){
     <div id="issPlanPanel"></div></div>`;
   $("#issNLText").value=s.text||"";$("#issNLGuide").value=s.guide||"";
   state.issPlan=s.plan||null;
-  $("#issPlanPanel").innerHTML=(s.running&&s.jobId)?issRunningHtml():issNLPlanHtml();   // 진행중/저장계획 복원
+  renderIssCard();   // 진행중/저장계획/실패를 run-box 카드로 복원
   state.issNL=state.issNL||{};state.issNL.open=true;saveIssNL();
   if(s.running&&s.jobId)runIssJob();   // 진행중이던 작업 이어서 폴링(새로고침 복원)
 }
-const issRunningHtml=()=>'<div class="ent-empty">LLM이 해석하는 중… <span class="dim">(진행중 — 새로고침·이동해도 유지됩니다)</span></div>';
 async function issuePlan(){
   const text=$("#issNLText").value, guide=$("#issNLGuide").value;
   if(!text.trim()){alert("원문/지시를 입력하세요.");return;}
   // 비동기: 서버가 즉시 job_id 반환 → 백그라운드 LLM → 짧은 폴링(프록시 타임아웃 회피). 진행중 상태 보존.
   let start;
   try{start=(await apiPost({step:"ISSUE_CRUD_PLAN",input:{text,guide:guide||undefined}})).result;}
-  catch(e){$("#issPlanPanel").innerHTML=`<div class="plan-err">계획 생성 실패: ${esc((e.code?e.code+" ":"")+e.message)}</div>`;return;}
-  state.issNL={open:true,text,guide,jobId:start.job_id,running:true,plan:null,needs_master:[],unresolved:[]};
+  catch(e){state.issNL={open:true,text,guide,running:false,plan:null,error:(e.code?e.code+" ":"")+e.message};saveIssNL();renderIssCard();return;}
+  state.issNL={open:true,text,guide,jobId:start.job_id,running:true,_t0:Date.now(),plan:null,error:null,needs_master:[],unresolved:[]};
   state.issPlan=null;saveIssNL();
   runIssJob();
 }
 async function runIssJob(){
   const s=state.issNL;if(!s||!s.jobId||!s.running)return;
   const jobId=s.jobId;
-  if($("#issPlanPanel"))$("#issPlanPanel").innerHTML=issRunningHtml();
+  if(!s._t0){s._t0=Date.now();saveIssNL();}
+  renderIssCard();
   const j=await pollJob(jobId);
   if(!state.issNL||state.issNL.jobId!==jobId)return;   // 그 사이 새 계획으로 대체됨 → 무시
   if(j.state==="done"){
     const r=j.result||{};
-    state.issNL={open:true,text:s.text,guide:s.guide,plan:r.plan||[],needs_master:r.needs_master||[],unresolved:r.unresolved||[]};
+    state.issNL={open:true,text:s.text,guide:s.guide,plan:r.plan||[],error:null,needs_master:r.needs_master||[],unresolved:r.unresolved||[]};
     state.issPlan=state.issNL.plan;saveIssNL();
-    if($("#issPlanPanel"))$("#issPlanPanel").innerHTML=issNLPlanHtml();
   }else{
-    state.issNL.running=false;saveIssNL();
-    if($("#issPlanPanel"))$("#issPlanPanel").innerHTML=`<div class="plan-err">계획 생성 실패: ${esc((j.code?j.code+" ":"")+(j.error||"오류"))}</div>`;
+    state.issNL.running=false;state.issNL.error=(j.code?j.code+" ":"")+(j.error||"오류");saveIssNL();
   }
+  renderIssCard();
 }
 async function issueApply(){
   const picked=[];document.querySelectorAll('#issPlanPanel [data-issix]').forEach(cb=>{if(cb.checked)picked.push(state.issPlan[+cb.dataset.issix]);});
@@ -2136,14 +2175,19 @@ function mstPlanHtml(){
     +s.unresolved.map(u=>`· ${esc(u.text||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
   return h;
 }
-const mstRunningHtml=()=>'<div class="ent-empty">LLM이 해석하는 중… <span class="dim">(진행중 — 새로고침·이동해도 유지됩니다)</span></div>';
+function renderMstCard(){   // 이슈 CRUD와 동일한 run-box 카드
+  const el=$("#mstPlanPanel");if(!el)return;
+  const s=state.mst;
+  if(!s||(!(s.running&&s.jobId)&&s.plan==null&&!s.error)){el.innerHTML="";return;}
+  el.innerHTML=crudCardHtml({label:"기준정보 CRUD",s,planInner:s.plan!=null?mstPlanHtml():""});
+}
 function restoreMstNL(){   // mst 탭 표시 시 보존된 계획/진행중 복원
-  const s=state.mst;if(!s||!(s.text||s.plan||s.jobId))return;
+  const s=state.mst;if(!s||!(s.text||s.plan||s.jobId||s.error))return;
   const panel=$("#mstSeedPanel");if(panel)panel.hidden=false;
   if($("#mstSeedText"))$("#mstSeedText").value=s.text||"";
   if($("#mstGuide"))$("#mstGuide").value=s.guide||"";
   state.mstPlan=s.plan||null;
-  if($("#mstPlanPanel"))$("#mstPlanPanel").innerHTML=(s.running&&s.jobId)?mstRunningHtml():mstPlanHtml();
+  renderMstCard();
   if(s.running&&s.jobId)runMstJob();   // 진행중이던 작업 이어서 폴링
 }
 async function mstPlan(){
@@ -2151,26 +2195,26 @@ async function mstPlan(){
   if(!text.trim()){alert("원문(붙여넣기 또는 자연어 지시)을 입력하세요.");return;}
   let start;
   try{start=(await apiPost({step:"MASTER_SEED_PLAN",input:{text,guide:guide||undefined}})).result;}
-  catch(e){$("#mstPlanPanel").innerHTML=`<div class="plan-err">계획 생성 실패: ${esc((e.code?e.code+" ":"")+e.message)}</div>`;return;}
-  state.mst={open:true,text,guide,jobId:start.job_id,running:true,plan:null,items:[],unresolved:[]};
+  catch(e){state.mst={open:true,text,guide,running:false,plan:null,error:(e.code?e.code+" ":"")+e.message};saveMstNL();renderMstCard();return;}
+  state.mst={open:true,text,guide,jobId:start.job_id,running:true,_t0:Date.now(),plan:null,error:null,items:[],unresolved:[]};
   state.mstPlan=null;saveMstNL();
   runMstJob();
 }
 async function runMstJob(){
   const s=state.mst;if(!s||!s.jobId||!s.running)return;
   const jobId=s.jobId;
-  if($("#mstPlanPanel"))$("#mstPlanPanel").innerHTML=mstRunningHtml();
+  if(!s._t0){s._t0=Date.now();saveMstNL();}
+  renderMstCard();
   const j=await pollJob(jobId);
   if(!state.mst||state.mst.jobId!==jobId)return;
   if(j.state==="done"){
     const r=j.result||{};
-    state.mst={open:true,text:s.text,guide:s.guide,plan:r.plan||[],items:r.items||[],unresolved:r.unresolved||[]};
+    state.mst={open:true,text:s.text,guide:s.guide,plan:r.plan||[],error:null,items:r.items||[],unresolved:r.unresolved||[]};
     state.mstPlan=state.mst.plan;saveMstNL();
-    if($("#mstPlanPanel"))$("#mstPlanPanel").innerHTML=mstPlanHtml();
   }else{
-    state.mst.running=false;saveMstNL();
-    if($("#mstPlanPanel"))$("#mstPlanPanel").innerHTML=`<div class="plan-err">계획 생성 실패: ${esc((j.code?j.code+" ":"")+(j.error||"오류"))}</div>`;
+    state.mst.running=false;state.mst.error=(j.code?j.code+" ":"")+(j.error||"오류");saveMstNL();
   }
+  renderMstCard();
 }
 async function mstApply(){
   const picked=[];
