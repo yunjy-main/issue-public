@@ -1768,7 +1768,7 @@ function issueRowHtml(e,depth,hasKids,dup){
   const tog=hasKids?`<span class="tw-tog" data-tog="${escAttr(e.id)}">${state.treeExpanded&&state.treeExpanded[e.id]?'▾':'▸'}</span>`:'<span class="tw-tog-sp"></span>';
   return `<tr data-ent="${escAttr(e.id)}"${e.hidden?' class="row-hidden"':''}>`+
     `<td><span class="ty-badge ${c}">${esc(e.type)}</span>${e.hidden?' <span class="row-hide-mk" title="숨김">🙈</span>':''}</td>`+
-    `<td class="iss-t"><span class="tw-indent" style="width:${depth*14}px"></span>${tog}<span class="iss-tl"><span class="t">${esc(e.title||'(제목 없음)')}${dup?' <span class="dup-mark" title="다른 부모에도 표시됨">↗</span>':''}</span><span class="s">${esc(e.id)}</span></span></td>`+
+    `<td class="iss-t"><span class="tw-indent" style="width:${depth*14}px"></span>${tog}<span class="iss-tl"><span class="t">${esc(e.title||e.what||'(제목 없음)')}${dup?' <span class="dup-mark" title="다른 부모에도 표시됨">↗</span>':''}</span><span class="s">${esc(e.id)}</span></span></td>`+
     `<td>${isIss?(statusBadge(e.status)||dash):''}</td>`+
     `<td>${isIss?(sevBadge(e.severity)||dash):''}</td>`+
     `<td>${cell(e.process)}</td><td>${cell(e.product)}</td><td>${cell(e.project)}</td>`+
@@ -1791,7 +1791,7 @@ async function renderTrash(){   // 휴지통 뷰(BG-9): 삭제된 항목 목록 
     if(!ts.length){$("#issueList").innerHTML='<div class="empty">휴지통이 비어 있습니다.</div>';return;}
     const rows=ts.map(e=>`<tr class="trash-row">`+
       `<td><span class="ty-badge ${tyCls(e.type)}">${esc(e.type)}</span></td>`+
-      `<td class="iss-t"><span class="iss-tl"><span class="t">${esc(e.title||'(제목 없음)')}</span><span class="s">${esc(e.id)}</span></span></td>`+
+      `<td class="iss-t"><span class="iss-tl"><span class="t">${esc(e.title||e.what||'(제목 없음)')}</span><span class="s">${esc(e.id)}</span></span></td>`+
       `<td>${e.trashed_at?esc(String(e.trashed_at).slice(0,10)):'—'}</td>`+
       `<td><button class="ent-restore-btn" data-restore="${escAttr(e.id)}">↩ 복원</button></td></tr>`).join("");
     $("#issueList").innerHTML=`<div class="table-wrap"><table class="issues"><thead><tr>`+
@@ -2614,7 +2614,7 @@ async function openEntity(id){
   const relCount=Object.values(groups).reduce((a,g)=>a+g.length,0);
   const dash='<span class="dim">—</span>';
   const relHtml=Object.keys(groups).sort().map(t=>{
-    const cells=groups[t].map(({o,dir,rid})=>{const oe=byId[o],label=oe?(oe.title||o):o;
+    const cells=groups[t].map(({o,dir,rid})=>{const oe=byId[o],label=oe?(oe.title||oe.what||o):o;   // 사건은 what을 라벨로
       const occD=oe&&oe.occurred_at?esc(String(oe.occurred_at).slice(0,10)):"";
       const mk=oe?(oe.date_confidence==="approximate"?'<span class="mk-approx">≈</span>':oe.date_confidence==="uncertain"?'<span class="mk-unc">?</span>':''):'';
       const cap=oe&&oe.captured_at?esc(fmtTs(oe.captured_at).slice(0,10)):"";
@@ -2648,7 +2648,7 @@ async function openEntity(id){
           : (srcIds.length?`<button class="ent-redo-btn" data-redo="${escAttr(id)}" title="이 항목 삭제 후 원문 재추출">↻ 재추출</button>`:'')   // 원본 source 있는 항목만(사람이 만든 이슈는 원문 없음)
           + `<button class="ent-hide-btn" data-enthide="${escAttr(id)}" data-hidden="${e.hidden?1:0}" title="${e.hidden?'목록에 다시 표시':'그래프는 유지하고 목록에서만 숨김'}">${e.hidden?'👁 숨김해제':'🙈 숨기기'}</button>`+
             `<button class="ent-del-btn" data-entdel="${escAttr(id)}" title="관계 포함 소프트 삭제(이력 보존)">🗑 삭제</button>`)+`</div>
-    <div class="ent-title">${esc(e.title||'(제목 없음)')}</div>`+
+    <div class="ent-title">${esc(e.title||e.what||'(제목 없음)')}</div>`+
     (e.summary?`<div class="ent-sum">${esc(e.summary)}</div>`:'')+
     ((["issue","case","action","initiative"].indexOf(e.type)>=0||hasPM(e))
       ?`<div class="ent-sec"><h4>PM · 시간 정보</h4><div class="pm-grid">`+

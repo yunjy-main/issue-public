@@ -117,7 +117,7 @@ def create_entity(etype, fields, actor="human"):
         return e
 
 
-_EVENT_FIELDS = ("title", "summary", "kind", "who", "occurred_at", "date_confidence",
+_EVENT_FIELDS = ("title", "what", "summary", "kind", "who", "occurred_at", "date_confidence",
                  "node", "process", "product", "project", "evidence", "urls")
 
 
@@ -135,6 +135,8 @@ def create_event(fields, actor="human"):
             v = fields.get(k)
             if v not in (None, "", []):
                 e[k] = v
+        if not e.get("title") and e.get("what"):   # 사건 본문은 what — title 없으면 what을 제목으로(표시 통일)
+            e["title"] = e["what"]
         e = upsert_entity(e, actor)
         append_event({"event": "review.create", "entity_id": eid, "actor": actor, "via": "event"})
         return e
