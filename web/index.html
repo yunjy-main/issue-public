@@ -147,6 +147,11 @@
   .cand-b input.ed{width:100%;margin-top:4px;background:var(--bg);color:var(--fg);border:1px solid var(--accent);
     border-radius:4px;padding:3px 6px;font:inherit;font-size:11.5px}
   .cand-b select.ed{margin-top:4px;font-size:11px;background:var(--bg);color:var(--fg);border:1px solid var(--accent);border-radius:4px;padding:2px}
+  .cand-list{margin:4px 0}
+  .cand.cand-skip{opacity:.55}
+  .cand-h .plan-op{font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase}
+  .cand-h .cand-ttl{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px}
+  .cand-b .plan-det{color:var(--muted);font-size:11px}
   .rel-list{font-size:10.5px;color:var(--muted);font-family:var(--mono);padding:4px 8px}
   .rel-list div{padding:1px 0}
   .links-note{font-size:10.5px;color:var(--muted);padding:4px 8px}
@@ -1884,32 +1889,13 @@ function issNLPlanHtml(){
   const s=state.issNL||{},plan=s.plan;
   if(plan==null)return "";
   const nm=(s.needs_master||[]).length,nu=(s.unresolved||[]).length;
-  let h=`<div class="plan-h">계획 ${plan.length}${nm?` · 기준정보 필요 ${nm}`:''}${nu?` · 미해소 ${nu}`:''}</div>`;
+  let h=`<div class="plan-h">계획 ${plan.length}${nm?` · 기준정보 필요 ${nm}`:''}${nu?` · 미해소 ${nu}`:''}
+    <span class="dim">항목별 accept·edit·reject 후 우측 COMMIT</span></div>`;
   if(!plan.length&&!nm&&!nu)h+=`<div class="ent-empty">뽑아낸 이슈 없음</div>`;
   if(plan.length){
-    h+=`<div class="plan-list">`+plan.map((p,i)=>{
-      const cls=p.op==="create"?"op-c":p.op==="update"?"op-u":p.op==="delete"?"op-d":"op-s";
-      const sign=p.op==="create"?"+":p.op==="update"?"~":p.op==="delete"?"−":"=";
-      let det="";
-      if(p.op==="create"){const c=p.coordinates||{};const co=["node","process","product","project"].map(k=>c[k]).filter(Boolean).join("/");
-        det=(co?co+" · ":"")+(p.status||"")+(p.severity?" "+p.severity:"");}
-      else if(p.op==="update"){const pt=p.patch||{};det=Object.keys(pt).map(k=>k+"="+pt[k]).join(" · ");}
-      else if(p.op==="delete")det="삭제";
-      else det=esc(p.warn||"변경 없음");
-      const label=p.op==="create"?(p.title||"(제목 없음)"):(p.id+(p.title?" "+p.title:""));
-      const chk=(p.op==="skip"||p.op==="delete"||p.warn)?'':'checked';
-      const dis=(p.op==="skip")?'disabled':'';
-      return `<label class="plan-row ${cls}"><input type="checkbox" data-issix="${i}" ${dis} ${chk}>
-        <span class="plan-sign">${sign}</span><span class="plan-op">${esc(p.op)}</span>
-        <b>${esc(label).slice(0,40)}</b><span class="plan-det">${esc(det)}</span>
-        ${p.confidence?`<span class="dim" style="font-size:9px">${esc(p.confidence)}</span>`:''}
-        ${p.warn?`<span class="plan-warn">⚠ ${esc(p.warn)}</span>`:''}</label>`;
-    }).join("")+`</div>`;
-    const applicable=plan.filter(p=>p.op!=="skip"&&!p.warn).length;   // 적용 가능한(=skip/경고 아님) 항목 수
-    h+=applicable
-      ? `<div class="seed-ctl"><button class="btn primary" id="btnIssApply">선택 적용</button>
-          <span class="dim">삭제·경고 항목은 기본 미선택. 좌표 없는 create는 적용돼도 막힙니다.</span></div>`
-      : `<div class="seed-ctl"><span class="dim">적용할 새 이슈가 없습니다 — 모두 이미 등록됐거나 변경 없음(skip). 개별 이슈는 <b>이슈 목록</b>에서 직접 편집·종결하세요.</span></div>`;
+    h+=crudReviewListHtml("iss",s);
+    if(!crudHasApplicable(s))
+      h+=`<div class="seed-ctl"><span class="dim">적용할 새 이슈가 없습니다 — 모두 이미 등록됐거나 변경 없음(skip). 개별 이슈는 <b>이슈 목록</b>에서 직접 편집·종결하세요.</span></div>`;
   }
   if(nm)h+=`<div class="plan-err">기준정보 먼저 등록 필요:<br>`+s.needs_master.map(u=>`· ${esc(u.surface||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
   if(nu)h+=`<div class="plan-err">미해소:<br>`+s.unresolved.map(u=>`· ${esc(u.text||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
@@ -1936,16 +1922,25 @@ function crudCardHtml(cfg){
   if(running)body=`<div class="rb-run">LLM이 해석하는 중… <span class="rb-timer" data-timer>${sec}초</span> <span style="color:var(--muted)">(진행중 — 새로고침·이동해도 유지)</span></div>`;
   else if(err)body=`<div class="rb-err">계획 생성 실패: ${esc(err)}</div>`;
   else body=cfg.planInner||'<div class="ent-empty">계획 없음</div>';
+  const del=cfg.kind?`<button class="rb-del" data-crudclear="${cfg.kind}" title="계획 지우기">×</button>`:'';
   return `<div class="run-box crud-card">
-    <div class="rb-top"><span class="rb-id">${esc(cfg.label)}</span><span class="rb-src">${snip}</span>${badge}</div>
+    <div class="rb-top"><span class="rb-id">${esc(cfg.label)}</span><span class="rb-src">${snip}</span>${badge}${del}</div>
     <div class="rb-stages">${stages}</div>
-    <div class="rb-main"><div class="rb-body">${body}</div></div></div>`;
+    <div class="rb-main"><div class="rb-body">${body}</div>${cfg.commit||''}</div></div>`;
+}
+// 라이브 카드(진행/검토/실패) + 확정 히스토리를 한 패널에 렌더. kind="mst"|"iss".
+function crudCommitCol(kind,s){
+  return (s&&s.plan!=null&&crudHasApplicable(s))
+    ? `<div class="rb-commit"><button class="rb-commit-btn" data-crudcommit="${kind}">확정<br>COMMIT</button></div>`:'';
 }
 function renderIssCard(){
   const el=$("#issPlanPanel");if(!el)return;
   const s=state.issNL;
-  if(!s||(!(s.running&&s.jobId)&&s.plan==null&&!s.error)){el.innerHTML="";return;}
-  el.innerHTML=crudCardHtml({label:"이슈 CRUD",s,planInner:s.plan!=null?issNLPlanHtml():""});
+  let html="";
+  if(s&&((s.running&&s.jobId)||s.plan!=null||s.error))
+    html+=crudCardHtml({label:"이슈 CRUD",kind:"iss",s,planInner:s.plan!=null?issNLPlanHtml():"",commit:crudCommitCol("iss",s)});
+  html+=(state.issRuns||[]).map(r=>crudRunBoxHtml("iss",r)).join("");
+  el.innerHTML=html;
 }
 async function openIssueNL(force){
   const p=$("#issueCrudPanel");
@@ -2157,55 +2152,42 @@ function mstPlanHtml(){
   const s=state.mst||{},plan=s.plan;
   if(plan==null)return "";
   const nUnres=(s.unresolved||[]).length;
-  let h=`<div class="plan-h">LLM 해석 → 항목 ${(s.items||[]).length} · 계획 ${plan.length}${nUnres?` · 미해소 ${nUnres}`:''}</div>`;
+  let h=`<div class="plan-h">LLM 해석 → 항목 ${(s.items||[]).length} · 계획 ${plan.length}${nUnres?` · 미해소 ${nUnres}`:''}
+    <span class="dim">항목별 accept·edit·reject 후 우측 COMMIT</span></div>`;
   if(!plan.length&&!nUnres)h+=`<div class="ent-empty">뽑아낸 기준정보 없음</div>`;
   if(plan.length){
-    h+=`<div class="plan-list">`+plan.map((p,i)=>{
-      const cls=p.op==="create"?"op-c":p.op==="update"?"op-u":p.op==="delete"?"op-d":"op-s";
-      const sign=p.op==="create"?"+":p.op==="update"?"~":p.op==="delete"?"−":"=";
-      let det="";
-      if(p.op==="create")det=(p.node?`node=${esc(p.node)} `:'')+((p.aliases||[]).length?`별칭 ${p.aliases.map(esc).join(", ")}`:'');
-      else if(p.op==="update"){const c=p.changes||{};const bits=[];
-        if(c.aliases_add)bits.push("별칭 +"+c.aliases_add.map(esc).join(", "));
-        if(c.label)bits.push(`label ${esc(c.label.from||'—')} → ${esc(c.label.to)}`);
-        if(c.node)bits.push(`node ${esc(c.node.from||'—')} → ${esc(c.node.to)}`);
-        det=bits.join(" · ");}
-      else if(p.op==="delete")det="삭제 요청";
-      else det=esc(p.why||"변경 없음");
-      const dis=(p.op==="skip")?'disabled':'';
-      const chk=(p.op==="skip"||p.op==="delete")?'':'checked';
-      return `<label class="plan-row ${cls}">
-        <input type="checkbox" data-planix="${i}" ${dis} ${chk}>
-        <span class="plan-sign">${sign}</span><span class="plan-op">${esc(p.op)}</span>
-        <span class="ty-badge">${esc(p.type)}</span><b>${esc(p.id)}</b>
-        <span class="plan-det">${det}</span>
-        ${p.confidence?`<span class="dim" style="font-size:9px">${esc(p.confidence)}</span>`:''}
-        ${p.warn?`<span class="plan-warn">⚠ ${esc(p.warn)}</span>`:''}</label>`;
-    }).join("")+`</div>`;
-    const applicable=plan.filter(p=>p.op!=="skip"&&!p.warn).length;   // 적용 가능한(=skip/경고 아님) 항목 수
-    h+=applicable
-      ? `<div class="seed-ctl"><button class="btn primary" id="btnMstApply">선택 적용</button>
-          <span class="dim">적용은 전통 CRUD와 동일한 저장 경로·검증을 지납니다. 삭제는 기본 미선택.</span></div>`
-      : `<div class="seed-ctl"><span class="dim">적용할 새 기준정보가 없습니다 — 모두 이미 등록됨(skip). 개별 항목은 <b>위 트리에서 ✏️편집·🗑삭제</b>하거나 <b>+ node/process/…</b>로 새로 만드세요.</span></div>`;
+    h+=crudReviewListHtml("mst",s);
+    if(!mstHasApplicable(s))
+      h+=`<div class="seed-ctl"><span class="dim">적용할 새 기준정보가 없습니다 — 모두 이미 등록됨(skip). 개별 항목은 <b>위 트리에서 ✏️편집·🗑삭제</b>하거나 <b>+ node/process/…</b>로 새로 만드세요.</span></div>`;
   }
   if(nUnres)h+=`<div class="plan-err">미해소(사람 확인 필요):<br>`
     +s.unresolved.map(u=>`· ${esc(u.text||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
   return h;
 }
-function renderMstCard(){   // 이슈 CRUD와 동일한 run-box 카드
+// 커밋 가능 여부: 결정이 accept/edit인 항목이 하나라도 있는가(reject·skip·경고 제외)
+function crudHasApplicable(s){
+  const plan=(s&&s.plan)||[],rv=(s&&s.reviews)||{};
+  return plan.some((p,i)=>{const d=(rv[i]&&rv[i].review)||crudDefaultRev(p.op);
+    return d!=="reject"&&d!=="skip"&&p.op!=="skip"&&!p.warn;});
+}
+function mstHasApplicable(s){return crudHasApplicable(s);}
+function renderMstCard(){   // 이슈 CRUD와 동일한 run-box 카드 + 확정 히스토리
   const el=$("#mstPlanPanel");if(!el)return;
   const s=state.mst;
-  if(!s||(!(s.running&&s.jobId)&&s.plan==null&&!s.error)){el.innerHTML="";return;}
-  el.innerHTML=crudCardHtml({label:"기준정보 CRUD",s,planInner:s.plan!=null?mstPlanHtml():""});
+  let html="";
+  if(s&&((s.running&&s.jobId)||s.plan!=null||s.error))
+    html+=crudCardHtml({label:"기준정보 CRUD",kind:"mst",s,planInner:s.plan!=null?mstPlanHtml():"",commit:crudCommitCol("mst",s)});
+  html+=(state.mstRuns||[]).map(r=>crudRunBoxHtml("mst",r)).join("");
+  el.innerHTML=html;
 }
-function restoreMstNL(){   // mst 탭 표시 시 보존된 계획/진행중 복원
-  const s=state.mst;if(!s||!(s.text||s.plan||s.jobId||s.error))return;
+function restoreMstNL(){   // mst 탭 표시 시 보존된 계획/진행중/확정 히스토리 복원
+  const s=state.mst;if(!s&&!(state.mstRuns||[]).length)return;
   const panel=$("#mstSeedPanel");if(panel)panel.hidden=false;
-  if($("#mstSeedText"))$("#mstSeedText").value=s.text||"";
-  if($("#mstGuide"))$("#mstGuide").value=s.guide||"";
-  state.mstPlan=s.plan||null;
+  if(s){if($("#mstSeedText"))$("#mstSeedText").value=s.text||"";
+    if($("#mstGuide"))$("#mstGuide").value=s.guide||"";}
+  state.mstPlan=(s&&s.plan)||null;
   renderMstCard();
-  if(s.running&&s.jobId)runMstJob();   // 진행중이던 작업 이어서 폴링
+  if(s&&s.running&&s.jobId)runMstJob();   // 진행중이던 작업 이어서 폴링
 }
 async function mstPlan(){
   const text=$("#mstSeedText").value, guide=$("#mstGuide").value;
@@ -2248,6 +2230,178 @@ async function mstApply(){
     state.mst=null;state.mstPlan=null;saveMstNL();   // 적용 완료 → 정리
   }catch(e){alert("적용 실패: "+(e.code?e.code+" ":"")+e.message);}
 }
+
+// ══ 자연어 CRUD 항목별 검토(accept/edit/reject/skip) + 커밋 + 커밋 후 원문·복기 ══
+//    입력 탭 run-box UX를 이식 — 개별 결정 후 COMMIT, 확정건은 히스토리로 남아 원문·당시 결정 조회.
+const LS_MSTRUNS="issue.mstruns", LS_ISSRUNS="issue.issruns";
+function saveCrudRuns(kind){try{localStorage.setItem(kind==="mst"?LS_MSTRUNS:LS_ISSRUNS,
+  JSON.stringify((kind==="mst"?state.mstRuns:state.issRuns)||[]));}catch(e){}}
+function loadCrudRuns(){
+  try{state.mstRuns=JSON.parse(localStorage.getItem(LS_MSTRUNS)||"[]")||[];}catch(e){state.mstRuns=[];}
+  try{state.issRuns=JSON.parse(localStorage.getItem(LS_ISSRUNS)||"[]")||[];}catch(e){state.issRuns=[];}
+}
+let _ridN=0; function genRid(kind){_ridN++;return (kind==="mst"?"MRUN-":"IRUN-")+Date.now()+"-"+_ridN;}
+// 기본 결정: create/update=수락, delete=거절(파괴적·명시 요구), skip=변경없음(비적용)
+function crudDefaultRev(op){return op==="skip"?"skip":op==="delete"?"reject":"accept";}
+function crudRevBtns(kind,i,dec,op){
+  if(op==="skip")return `<span class="cf">변경 없음 · 적용 대상 아님</span>`;
+  const on=x=>dec===x?" on":"";
+  const edt=(op==="create"||op==="update")?`<button class="edt${on("edit")}" data-crudrev="edit" data-crudkind="${kind}" data-crudix="${i}">edit</button>`:'';
+  return `<span class="rev">
+    <button class="acc${on("accept")}" data-crudrev="accept" data-crudkind="${kind}" data-crudix="${i}">accept</button>
+    ${edt}
+    <button class="rej${on("reject")}" data-crudrev="reject" data-crudkind="${kind}" data-crudix="${i}">reject</button></span>`;
+}
+function crudMstDet(p){
+  if(p.op==="create")return (p.node?`node=${esc(p.node)} `:'')+((p.aliases||[]).length?`별칭 ${p.aliases.map(esc).join(", ")}`:'');
+  if(p.op==="update"){const c=p.changes||{},b=[];
+    if(c.aliases_add)b.push("별칭 +"+c.aliases_add.map(esc).join(", "));
+    if(c.label)b.push(`label ${esc(c.label.from||'—')} → ${esc(c.label.to)}`);
+    if(c.node)b.push(`node ${esc(c.node.from||'—')} → ${esc(c.node.to)}`);
+    return b.join(" · ");}
+  if(p.op==="delete")return "삭제 요청";
+  return esc(p.why||"변경 없음");
+}
+function crudIssDet(p){
+  if(p.op==="create"){const c=p.coordinates||{};const co=["node","process","product","project"].map(k=>c[k]).filter(Boolean).join("/");
+    return (co?co+" · ":"")+esc(p.status||"")+(p.severity?" "+esc(p.severity):"");}
+  if(p.op==="update"){const pt=p.patch||{};return Object.keys(pt).map(k=>k+"="+esc(pt[k])).join(" · ");}
+  if(p.op==="delete")return "삭제(휴지통)";
+  return esc(p.warn||"변경 없음");
+}
+function crudEditFieldsHtml(kind,i,p,patch){   // edit 모드 인라인 입력 — apply가 소비하는 필드만
+  const v=k=>escAttr(patch[k]!=null?patch[k]:"");
+  if(kind==="mst"){
+    const al=patch.aliases!=null?patch.aliases:(p.aliases||[]).join(", ");
+    const lb=patch.label!=null?patch.label:(p.op==="update"&&p.changes&&p.changes.label?p.changes.label.to:(p.label||""));
+    return `<input class="ed" data-cruded="label" data-crudkind="mst" data-crudix="${i}" value="${escAttr(lb)}" placeholder="label">
+      <input class="ed" data-cruded="aliases" data-crudkind="mst" data-crudix="${i}" value="${escAttr(al)}" placeholder="aliases(쉼표 구분)">`;
+  }
+  if(p.op==="create"){
+    const t=patch.title!=null?patch.title:(p.title||""),s=patch.status!=null?patch.status:(p.status||""),sv=patch.severity!=null?patch.severity:(p.severity||"");
+    return `<input class="ed" data-cruded="title" data-crudkind="iss" data-crudix="${i}" value="${escAttr(t)}" placeholder="제목">
+      <input class="ed" data-cruded="status" data-crudkind="iss" data-crudix="${i}" value="${escAttr(s)}" placeholder="상태">
+      <input class="ed" data-cruded="severity" data-crudkind="iss" data-crudix="${i}" value="${escAttr(sv)}" placeholder="심각도(S1~S4)">`;
+  }
+  const s=patch.status!=null?patch.status:((p.patch||{}).status||""),sv=patch.severity!=null?patch.severity:((p.patch||{}).severity||"");
+  return `<input class="ed" data-cruded="status" data-crudkind="iss" data-crudix="${i}" value="${escAttr(s)}" placeholder="상태">
+    <input class="ed" data-cruded="severity" data-crudkind="iss" data-crudix="${i}" value="${escAttr(sv)}" placeholder="심각도(S1~S4)">`;
+}
+// 항목별 검토 목록(.cand 재사용 — 입력 탭과 동일 룩) : kind="mst"|"iss"
+function crudReviewListHtml(kind,s){
+  const plan=s.plan||[],rv=s.reviews||{};
+  return `<div class="cand-list">`+plan.map((p,i)=>{
+    const dec=(rv[i]&&rv[i].review)||crudDefaultRev(p.op);
+    const patch=(rv[i]&&rv[i].patch)||{};
+    const sign=p.op==="create"?"+":p.op==="update"?"~":p.op==="delete"?"−":"=";
+    const det=kind==="mst"?crudMstDet(p):crudIssDet(p);
+    const label=kind==="mst"?(p.id||"(id 없음)"):(p.op==="create"?(p.title||"(제목 없음)"):(p.id+(p.title?" "+p.title:"")));
+    const tyb=kind==="mst"?`<span class="ty">${esc(p.type||"")}</span>`:`<span class="ty issue">${p.op==="create"?"신규 이슈":"이슈"}</span>`;
+    const ed=dec==="edit";
+    return `<div class="cand ${dec==='reject'?'rej':''}${p.op==="skip"?" cand-skip":""}">
+      <div class="cand-h">${tyb}<span class="plan-op">${sign} ${esc(p.op)}</span>
+        <b class="cand-ttl">${esc(label).slice(0,44)}</b>
+        ${p.confidence?`<span class="cf">${esc(p.confidence)}</span>`:''}
+        ${crudRevBtns(kind,i,dec,p.op)}</div>
+      <div class="cand-b"><div class="plan-det">${det}</div>
+        ${p.warn?`<div class="plan-warn">⚠ ${esc(p.warn)}</div>`:''}
+        ${ed?crudEditFieldsHtml(kind,i,p,patch):''}
+      </div></div>`;
+  }).join("")+`</div>`;
+}
+// 커밋: 수락(+수정)된 항목만 적용 → 성공 시 히스토리로 스냅샷(원문·결정 보존) 후 라이브 계획 정리
+function crudApplyRow(kind,p,rv){
+  const patch=(rv&&rv.review==="edit"&&rv.patch)||null;
+  if(!patch)return p;
+  const q=Object.assign({},p);
+  if(kind==="mst"){
+    if(patch.label!=null)q.label=patch.label;
+    if(patch.aliases!=null)q.aliases=String(patch.aliases).split(",").map(x=>x.trim()).filter(Boolean);
+    if(p.op==="update"){q.changes=Object.assign({},p.changes||{});
+      if(patch.label!=null)q.changes.label={to:patch.label};
+      if(patch.aliases!=null&&q.aliases.length)q.changes.aliases_add=q.aliases;}
+  }else if(p.op==="create"){
+    ["title","status","severity"].forEach(k=>{if(patch[k]!=null&&patch[k]!=="")q[k]=patch[k];});
+  }else if(p.op==="update"){
+    q.patch=Object.assign({},p.patch||{});
+    ["status","severity"].forEach(k=>{if(patch[k]!=null&&patch[k]!=="")q.patch[k]=patch[k];});
+  }
+  return q;
+}
+async function crudCommit(kind){
+  const s=kind==="mst"?state.mst:state.issNL;
+  if(!s||!s.plan){return;}
+  const rv=s.reviews||{},rows=[];
+  s.plan.forEach((p,i)=>{
+    const dec=(rv[i]&&rv[i].review)||crudDefaultRev(p.op);
+    if(dec==="reject"||dec==="skip"||p.op==="skip"||p.warn)return;
+    rows.push(crudApplyRow(kind,p,rv[i]));
+  });
+  if(!rows.length){alert("확정할 항목이 없습니다 — 하나 이상 accept 하세요(삭제·경고·skip은 제외).");return;}
+  const btn=document.querySelector('[data-crudcommit="'+kind+'"]');if(btn){btn.disabled=true;btn.innerHTML="확정 중…";}
+  const step=kind==="mst"?"MASTER_SEED_APPLY":"ISSUE_CRUD_APPLY";
+  try{
+    const r=(await apiPost({step,input:{apply:rows}})).result;
+    const run={rid:genRid(kind),text:s.text||"",guide:s.guide||"",plan:s.plan,reviews:rv,
+      n:r.n||0,failed:r.failed||[],committedAt:Date.now()};
+    if(kind==="mst"){
+      state.mstRuns=[run,...(state.mstRuns||[])].slice(0,20);saveCrudRuns("mst");
+      state.mst=null;state.mstPlan=null;saveMstNL();
+      if($("#mstSeedText"))$("#mstSeedText").value="";if($("#mstGuide"))$("#mstGuide").value="";
+      await loadMaster(true);renderMaster();renderMstCard();
+    }else{
+      state.issRuns=[run,...(state.issRuns||[])].slice(0,20);saveCrudRuns("iss");
+      state.issNL=null;state.issPlan=null;saveIssNL();
+      state.ents=null;await ensureIssueData(true);renderIssCard();
+    }
+    let m="확정 "+run.n+"건";if(run.failed.length)m+=" · 실패 "+run.failed.length;toast(m);
+  }catch(e){alert("확정 실패: "+(e.code?e.code+" ":"")+e.message);
+    if(btn){btn.disabled=false;btn.innerHTML="확정<br>COMMIT";}}
+}
+// 확정건 run-box(히스토리) — 확정됨 뱃지 + 📄원문 + 복기(당시 결정, 읽기전용)
+function crudRunBoxHtml(kind,run){
+  const when=run.committedAt?fmtTs(new Date(run.committedAt).toISOString()):"";
+  const snip=esc(((run.text||"").replace(/\s+/g,' ').trim().slice(0,56))||"(원문)");
+  const label=kind==="mst"?"기준정보 CRUD":"이슈 CRUD";
+  const fail=(run.failed||[]).length?` · 실패 ${run.failed.length}`:"";
+  const arw='<span class="sarw">›</span>';
+  const stages=`<span class="stg ok">입력 ✓</span>${arw}<span class="stg ok">LLM 해석 ✓</span>${arw}<span class="stg ok">검토 ✓</span>${arw}<span class="stg ok">COMMIT ✓</span>`;
+  const body=`<div class="rb-meta">확정 완료 — <b>${run.n}건</b> 적용${fail} · <button class="rb-src-btn" data-crudsrc="${kind}:${escAttr(run.rid)}">📄 원문</button></div>
+    <div class="run-raw">${run._srcOpen?crudSrcHtml(run):""}</div>
+    <div class="rb-recap"><span class="rb-recap-tog" data-crudrecap="${kind}:${escAttr(run.rid)}">${run._recapOpen?'▾':'▸'} 커밋 당시 결정 (복기)</span>
+      ${run._recapOpen?`<div class="rb-recap-body">${crudRecapHtml(kind,run)}</div>`:''}</div>`;
+  return `<div class="run-box crud-card">
+    <div class="rb-top"><span class="rb-id">${label}</span><span class="rb-src">${snip}${when?` · ${esc(when)}`:''}</span><span class="rb-status committed">확정됨</span>
+      <button class="rb-del" data-cruddel="${kind}:${escAttr(run.rid)}" title="히스토리에서 삭제">×</button></div>
+    <div class="rb-stages">${stages}</div>
+    <div class="rb-main"><div class="rb-body">${body}</div><div class="rb-commit"><div class="rb-done">✓ 확정</div></div></div></div>`;
+}
+function crudSrcHtml(run){
+  return `<div class="raw-src"><div class="raw-h"><b>원문</b>${run.guide?`<span class="raw-meta">가이드: ${esc(run.guide)}</span>`:''}</div><pre>${esc(run.text||'')}</pre></div>`;
+}
+const CRUD_DEC={accept:"수락",edit:"수정",reject:"거절",skip:"변경없음"};
+function crudRecapHtml(kind,run){
+  const plan=run.plan||[],rv=run.reviews||{};
+  if(!plan.length)return '<div class="ent-empty">계획 없음</div>';
+  return plan.map((p,i)=>{
+    const dec=(rv[i]&&rv[i].review)||crudDefaultRev(p.op);
+    const sign=p.op==="create"?"+":p.op==="update"?"~":p.op==="delete"?"−":"=";
+    const label=kind==="mst"?(p.id||''):(p.op==="create"?(p.title||''):(p.id||''));
+    return `<div class="recap-cand ${dec==='reject'||dec==='skip'?'rej':''}">
+      <span class="plan-sign">${sign}</span>
+      <span class="recap-t">${esc(p.op)} ${esc(label)}</span>
+      <span class="recap-dec dec-${dec==='skip'?'reject':dec}">${esc(CRUD_DEC[dec]||dec)}</span></div>`;
+  }).join("");
+}
+function toggleCrudSrc(kind,rid){const runs=kind==="mst"?state.mstRuns:state.issRuns;
+  const r=(runs||[]).find(x=>x.rid===rid);if(!r)return;r._srcOpen=!r._srcOpen;saveCrudRuns(kind);
+  (kind==="mst"?renderMstCard:renderIssCard)();}
+function toggleCrudRecap(kind,rid){const runs=kind==="mst"?state.mstRuns:state.issRuns;
+  const r=(runs||[]).find(x=>x.rid===rid);if(!r)return;r._recapOpen=!r._recapOpen;saveCrudRuns(kind);
+  (kind==="mst"?renderMstCard:renderIssCard)();}
+function crudDelRun(kind,rid){const key=kind==="mst"?"mstRuns":"issRuns";
+  state[key]=(state[key]||[]).filter(x=>x.rid!==rid);saveCrudRuns(kind);
+  (kind==="mst"?renderMstCard:renderIssCard)();}
 
 // ── 관계 편집기(상세페이지) — 사람이 직접 이슈 계층/관계를 만들고 해제 ──
 function relAddHtml(e){
@@ -2631,6 +2785,24 @@ document.addEventListener("click",e=>{
   if(rsrc){showRunSource(rsrc.dataset.runsrc);return;}
   const recap=e.target.closest("[data-recap]");
   if(recap){toggleRecap(recap.dataset.recap);return;}
+  // ── 자연어 CRUD 항목별 검토/커밋/원문/복기 ──
+  const crev=e.target.closest("[data-crudrev]");
+  if(crev){const kind=crev.dataset.crudkind,i=+crev.dataset.crudix;
+    const s=kind==="mst"?state.mst:state.issNL;if(!s)return;
+    s.reviews=s.reviews||{};const cur=s.reviews[i]||{};cur.review=crev.dataset.crudrev;s.reviews[i]=cur;
+    (kind==="mst"?saveMstNL:saveIssNL)();(kind==="mst"?renderMstCard:renderIssCard)();return;}
+  const ccom=e.target.closest("[data-crudcommit]");
+  if(ccom){crudCommit(ccom.dataset.crudcommit);return;}
+  const cclr=e.target.closest("[data-crudclear]");
+  if(cclr){const kind=cclr.dataset.crudclear;
+    if(kind==="mst"){state.mst=null;state.mstPlan=null;saveMstNL();if($("#mstSeedText"))$("#mstSeedText").value="";if($("#mstGuide"))$("#mstGuide").value="";renderMstCard();}
+    else{state.issNL=null;state.issPlan=null;saveIssNL();renderIssCard();}return;}
+  const csrc=e.target.closest("[data-crudsrc]");
+  if(csrc){const a=csrc.dataset.crudsrc.split(":");toggleCrudSrc(a[0],a.slice(1).join(":"));return;}
+  const crcp=e.target.closest("[data-crudrecap]");
+  if(crcp){const a=crcp.dataset.crudrecap.split(":");toggleCrudRecap(a[0],a.slice(1).join(":"));return;}
+  const cdel=e.target.closest("[data-cruddel]");
+  if(cdel){const a=cdel.dataset.cruddel.split(":");crudDelRun(a[0],a.slice(1).join(":"));return;}
   const scard=e.target.closest(".sample-card[data-grp]");
   if(scard){showSampleItem(scard.dataset.grp,+scard.dataset.i);return;}
   const sfill=e.target.closest("[data-fill]");
@@ -2745,6 +2917,12 @@ document.addEventListener("change",e=>{
     // 전면 재렌더하지 않고 해당 카드의 타입 배지만 갱신 — 재렌더가 포커스/입력을 삼키지 않도록.
     if(ed.dataset.ed==="type"){const b=cand.querySelector(".ty");
       if(b){b.textContent=ed.value;b.className="ty "+tyCls(ed.value);}}}
+  // 자연어 CRUD edit 입력 — 저장만(재렌더 안 함, 포커스 유지)
+  const ced=e.target.closest("[data-cruded]");
+  if(ced){const kind=ced.dataset.crudkind,i=+ced.dataset.crudix;
+    const s=kind==="mst"?state.mst:state.issNL;if(!s)return;
+    s.reviews=s.reviews||{};const cur=s.reviews[i]||{review:"edit"};cur.review="edit";cur.patch=cur.patch||{};
+    cur.patch[ced.dataset.cruded]=ced.value;s.reviews[i]=cur;(kind==="mst"?saveMstNL:saveIssNL)();}
 });
 document.addEventListener("input",e=>{   // 관계 편집기 결과 미리보기
   if(e.target.id==="relAddType"||e.target.id==="relAddTo")updateRelPreview();
@@ -2763,7 +2941,7 @@ loadManifest().then(route).catch(e=>{
   route();
 });
 renderSamples();   // 입력 하단 샘플 시나리오 grid
-loadIssNLState();loadMstNLState();   // 자연어 CRUD 계획 보존 상태 복원(탭 표시 때 재렌더)
+loadIssNLState();loadMstNLState();loadCrudRuns();   // 자연어 CRUD 계획·확정 히스토리 복원(탭 표시 때 재렌더)
 restoreRuns();   // 새로고침/재접속 시 히스토리 복원 + 실행 중 run 재폴링
 </script>
 </body>
