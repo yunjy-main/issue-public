@@ -594,9 +594,10 @@
     border-radius:3px;padding:0 5px;margin:1px 2px 0 0;color:var(--fg)}
   .cand-h .rev button.mrg.on{background:var(--warn);border-color:var(--warn);color:#fff}
   .mrg-note{font-size:10px;color:var(--warn);font-weight:600;margin-top:2px}
-  .reconcile-bar{display:flex;align-items:center;gap:8px;padding:2px 10px 4px}
+  .reconcile-bar{display:flex;align-items:center;gap:6px;padding:2px 10px 4px;flex-wrap:wrap}
   .reconcile-bar .btn{font-size:11px;padding:3px 10px}
-  #reconcileMsg{font-size:10.5px;color:var(--muted)}
+  .reconcile-bar .rc-gap{flex:1 1 8px;min-width:0}   /* 넓은 화면선 벌려주고, 좁으면 0으로 접힘 */
+  #reconcileMsg{font-size:10.5px;color:var(--muted);flex-basis:100%;width:100%}   /* 항상 제 줄(짓눌림 방지) */
   #reconcilePanel{margin:0 10px}
   .rec-item{display:flex;align-items:flex-start;gap:6px;border:1px solid var(--border);border-radius:5px;
     background:var(--panel);padding:5px 8px;margin-bottom:4px;font-size:11px}
@@ -669,7 +670,7 @@
     <div class="reconcile-bar">
       <button class="btn primary" id="btnIssueNew">+ 이슈 등록</button>
       <button class="btn" id="btnIssueNL">🗣 자연어 CRUD</button>
-      <span class="dim" style="flex:1;min-width:80px"></span>
+      <span class="rc-gap"></span>
       <button class="btn" id="btnReconcile">재조정 실행</button>
       <button class="btn" id="btnDedup">중복 병합</button>
       <button class="btn" id="btnRebuild" title="이벤트 로그로부터 projection 재생성 — 정합성 점검·복구(비파괴·멱등)">🔧 저장소 점검</button>
