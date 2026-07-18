@@ -1889,12 +1889,14 @@ function issNLPlanHtml(){
   const s=state.issNL||{},plan=s.plan;
   if(plan==null)return "";
   const nm=(s.needs_master||[]).length,nu=(s.unresolved||[]).length;
-  let h=`<div class="plan-h">계획 ${plan.length}${nm?` · 기준정보 필요 ${nm}`:''}${nu?` · 미해소 ${nu}`:''}
-    <span class="dim">항목별 accept·edit·reject 후 우측 COMMIT</span></div>`;
+  const nSkip=plan.filter(p=>p.op==="skip").length, nChg=plan.length-nSkip;
+  const hint=nChg?"항목별 accept·edit·reject 후 우측 COMMIT":"모두 변경 없음 — edit하면 update로 적용, 아니면 이슈 목록에서 직접 수정";
+  let h=`<div class="plan-h">계획 ${plan.length}${nChg?` · 변경 ${nChg}`:''}${nSkip?` · 변경 없음 ${nSkip}`:''}${nm?` · 기준정보 필요 ${nm}`:''}${nu?` · 미해소 ${nu}`:''}
+    <span class="dim">${hint}</span></div>`;
   if(!plan.length&&!nm&&!nu)h+=`<div class="ent-empty">뽑아낸 이슈 없음</div>`;
   if(plan.length){
     h+=crudReviewListHtml("iss",s);
-    if(!crudHasApplicable(s))
+    if(!crudHasApplicable("iss",s))
       h+=`<div class="seed-ctl"><span class="dim">적용할 새 이슈가 없습니다 — 모두 이미 등록됐거나 변경 없음(skip). 개별 이슈는 <b>이슈 목록</b>에서 직접 편집·종결하세요.</span></div>`;
   }
   if(nm)h+=`<div class="plan-err">기준정보 먼저 등록 필요:<br>`+s.needs_master.map(u=>`· ${esc(u.surface||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
@@ -1930,7 +1932,7 @@ function crudCardHtml(cfg){
 }
 // 라이브 카드(진행/검토/실패) + 확정 히스토리를 한 패널에 렌더. kind="mst"|"iss".
 function crudCommitCol(kind,s){
-  return (s&&s.plan!=null&&crudHasApplicable(s))
+  return (s&&s.plan!=null&&crudHasApplicable(kind,s))
     ? `<div class="rb-commit"><button class="rb-commit-btn" data-crudcommit="${kind}">확정<br>COMMIT</button></div>`:'';
 }
 function renderIssCard(){
@@ -2152,8 +2154,10 @@ function mstPlanHtml(){
   const s=state.mst||{},plan=s.plan;
   if(plan==null)return "";
   const nUnres=(s.unresolved||[]).length;
-  let h=`<div class="plan-h">LLM 해석 → 항목 ${(s.items||[]).length} · 계획 ${plan.length}${nUnres?` · 미해소 ${nUnres}`:''}
-    <span class="dim">항목별 accept·edit·reject 후 우측 COMMIT</span></div>`;
+  const nSkip=plan.filter(p=>p.op==="skip").length, nChg=plan.length-nSkip;
+  const hint=nChg?"항목별 accept·edit·reject 후 우측 COMMIT":"모두 변경 없음 — edit하면 update로 적용, 아니면 트리에서 직접 수정";
+  let h=`<div class="plan-h">계획 ${plan.length}${nChg?` · 변경 ${nChg}`:''}${nSkip?` · 변경 없음 ${nSkip}`:''}${nUnres?` · 미해소 ${nUnres}`:''}
+    <span class="dim">${hint}</span></div>`;
   if(!plan.length&&!nUnres)h+=`<div class="ent-empty">뽑아낸 기준정보 없음</div>`;
   if(plan.length){
     h+=crudReviewListHtml("mst",s);
@@ -2164,13 +2168,12 @@ function mstPlanHtml(){
     +s.unresolved.map(u=>`· ${esc(u.text||'')} — ${esc(u.why||'')}`).join("<br>")+`</div>`;
   return h;
 }
-// 커밋 가능 여부: 결정이 accept/edit인 항목이 하나라도 있는가(reject·skip·경고 제외)
-function crudHasApplicable(s){
+// 커밋 가능 여부: 적용 행이 하나라도 생기는가(reject·경고 제외, 변경없음은 편집 시 포함)
+function crudHasApplicable(kind,s){
   const plan=(s&&s.plan)||[],rv=(s&&s.reviews)||{};
-  return plan.some((p,i)=>{const d=(rv[i]&&rv[i].review)||crudDefaultRev(p.op);
-    return d!=="reject"&&d!=="skip"&&p.op!=="skip"&&!p.warn;});
+  return plan.some((p,i)=>crudApplyRow(kind,p,rv[i])!=null);
 }
-function mstHasApplicable(s){return crudHasApplicable(s);}
+function mstHasApplicable(s){return crudHasApplicable("mst",s);}
 function renderMstCard(){   // 이슈 CRUD와 동일한 run-box 카드 + 확정 히스토리
   const el=$("#mstPlanPanel");if(!el)return;
   const s=state.mst;
@@ -2241,16 +2244,14 @@ function loadCrudRuns(){
   try{state.issRuns=JSON.parse(localStorage.getItem(LS_ISSRUNS)||"[]")||[];}catch(e){state.issRuns=[];}
 }
 let _ridN=0; function genRid(kind){_ridN++;return (kind==="mst"?"MRUN-":"IRUN-")+Date.now()+"-"+_ridN;}
-// 기본 결정: create/update=수락, delete=거절(파괴적·명시 요구), skip=변경없음(비적용)
+// 기본 결정: create/update=수락, delete=거절(파괴적·명시 요구), skip=변경없음(비적용, 편집 시 update 승격)
 function crudDefaultRev(op){return op==="skip"?"skip":op==="delete"?"reject":"accept";}
 function crudRevBtns(kind,i,dec,op){
-  if(op==="skip")return `<span class="cf">변경 없음 · 적용 대상 아님</span>`;
   const on=x=>dec===x?" on":"";
-  const edt=(op==="create"||op==="update")?`<button class="edt${on("edit")}" data-crudrev="edit" data-crudkind="${kind}" data-crudix="${i}">edit</button>`:'';
-  return `<span class="rev">
-    <button class="acc${on("accept")}" data-crudrev="accept" data-crudkind="${kind}" data-crudix="${i}">accept</button>
-    ${edt}
-    <button class="rej${on("reject")}" data-crudrev="reject" data-crudkind="${kind}" data-crudix="${i}">reject</button></span>`;
+  const b=(cls,rev,txt)=>`<button class="${cls}${on(rev)}" data-crudrev="${rev}" data-crudkind="${kind}" data-crudix="${i}">${txt}</button>`;
+  if(op==="skip")   // 변경 없음 — 편집하면 update로 승격, 제외는 목록에서 숨김
+    return `<span class="cf">변경 없음</span><span class="rev">${b("edt","edit","edit→update")}${b("rej","reject","제외")}</span>`;
+  return `<span class="rev">${b("acc","accept","accept")}${b("edt","edit","edit")}${b("rej","reject","reject")}</span>`;
 }
 function crudMstDet(p){
   if(p.op==="create")return (p.node?`node=${esc(p.node)} `:'')+((p.aliases||[]).length?`별칭 ${p.aliases.map(esc).join(", ")}`:'');
@@ -2309,14 +2310,27 @@ function crudReviewListHtml(kind,s){
       </div></div>`;
   }).join("")+`</div>`;
 }
-// 커밋: 수락(+수정)된 항목만 적용 → 성공 시 히스토리로 스냅샷(원문·결정 보존) 후 라이브 계획 정리
+// 항목 → 적용 행(row) 또는 null(적용 대상 아님). reject/경고=null, skip은 편집 시 update로 승격.
+function crudSplit(v){return String(v==null?"":v).split(",").map(x=>x.trim()).filter(Boolean);}
 function crudApplyRow(kind,p,rv){
-  const patch=(rv&&rv.review==="edit"&&rv.patch)||null;
+  const dec=(rv&&rv.review)||crudDefaultRev(p.op);
+  if(dec==="reject"||p.warn)return null;
+  const patch=(dec==="edit"&&rv&&rv.patch)?rv.patch:null;
+  if(p.op==="skip"){   // 변경 없음 — 편집 있을 때만 update로 승격, 아니면 적용 안 함
+    if(!patch)return null;
+    if(kind==="mst"){const ch={};
+      if(patch.label!=null&&patch.label!=="")ch.label={to:patch.label};
+      const al=crudSplit(patch.aliases);if(al.length)ch.aliases_add=al;
+      return Object.keys(ch).length?{op:"update",type:p.type,id:p.id,changes:ch}:null;}
+    const pt={};["status","severity"].forEach(k=>{if(patch[k]!=null&&patch[k]!=="")pt[k]=patch[k];});
+    return Object.keys(pt).length?{op:"update",id:p.id,patch:pt}:null;
+  }
+  if(dec==="skip")return null;
   if(!patch)return p;
   const q=Object.assign({},p);
   if(kind==="mst"){
     if(patch.label!=null)q.label=patch.label;
-    if(patch.aliases!=null)q.aliases=String(patch.aliases).split(",").map(x=>x.trim()).filter(Boolean);
+    if(patch.aliases!=null)q.aliases=crudSplit(patch.aliases);
     if(p.op==="update"){q.changes=Object.assign({},p.changes||{});
       if(patch.label!=null)q.changes.label={to:patch.label};
       if(patch.aliases!=null&&q.aliases.length)q.changes.aliases_add=q.aliases;}
@@ -2332,12 +2346,8 @@ async function crudCommit(kind){
   const s=kind==="mst"?state.mst:state.issNL;
   if(!s||!s.plan){return;}
   const rv=s.reviews||{},rows=[];
-  s.plan.forEach((p,i)=>{
-    const dec=(rv[i]&&rv[i].review)||crudDefaultRev(p.op);
-    if(dec==="reject"||dec==="skip"||p.op==="skip"||p.warn)return;
-    rows.push(crudApplyRow(kind,p,rv[i]));
-  });
-  if(!rows.length){alert("확정할 항목이 없습니다 — 하나 이상 accept 하세요(삭제·경고·skip은 제외).");return;}
+  s.plan.forEach((p,i)=>{const row=crudApplyRow(kind,p,rv[i]);if(row)rows.push(row);});
+  if(!rows.length){alert("확정할 항목이 없습니다 — accept 하거나, 변경 없음 항목은 edit해 값을 넣으세요.");return;}
   const btn=document.querySelector('[data-crudcommit="'+kind+'"]');if(btn){btn.disabled=true;btn.innerHTML="확정 중…";}
   const step=kind==="mst"?"MASTER_SEED_APPLY":"ISSUE_CRUD_APPLY";
   try{
