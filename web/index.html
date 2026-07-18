@@ -2605,8 +2605,8 @@ async function openEntity(id){
       (e.state==="trashed"
         ? `<button class="ent-restore-btn" data-restore="${escAttr(id)}">↩ 복원</button>`
         : e.type==="context" ? ''   // context는 좌표 앵커 — 재추출·삭제 없음(materialize가 관리, 삭제 시 복원경로 없음)
-          : `<button class="ent-redo-btn" data-redo="${escAttr(id)}" title="이 항목 삭제 후 원문 재추출">↻ 재추출</button>`+
-            `<button class="ent-hide-btn" data-enthide="${escAttr(id)}" data-hidden="${e.hidden?1:0}" title="${e.hidden?'목록에 다시 표시':'그래프는 유지하고 목록에서만 숨김'}">${e.hidden?'👁 숨김해제':'🙈 숨기기'}</button>`+
+          : (srcIds.length?`<button class="ent-redo-btn" data-redo="${escAttr(id)}" title="이 항목 삭제 후 원문 재추출">↻ 재추출</button>`:'')   // 원본 source 있는 항목만(사람이 만든 이슈는 원문 없음)
+          + `<button class="ent-hide-btn" data-enthide="${escAttr(id)}" data-hidden="${e.hidden?1:0}" title="${e.hidden?'목록에 다시 표시':'그래프는 유지하고 목록에서만 숨김'}">${e.hidden?'👁 숨김해제':'🙈 숨기기'}</button>`+
             `<button class="ent-del-btn" data-entdel="${escAttr(id)}" title="관계 포함 소프트 삭제(이력 보존)">🗑 삭제</button>`)+`</div>
     <div class="ent-title">${esc(e.title||'(제목 없음)')}</div>`+
     (e.summary?`<div class="ent-sum">${esc(e.summary)}</div>`:'')+
