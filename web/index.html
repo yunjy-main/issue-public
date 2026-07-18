@@ -351,6 +351,14 @@
   .mst-al{display:inline-flex;flex-wrap:wrap;gap:3px}
   .mst-chip{background:var(--chip);border-radius:7px;padding:0 5px;font-size:9px;color:var(--muted);font-family:var(--mono)}
   .mst-chip.mst-xnode{background:transparent;border:1px solid var(--accent);color:var(--accent)}
+  .mst-view{margin-left:6px;font-size:9px;color:var(--muted)}
+  .mst-vbtn{font-size:9px;border:1px solid var(--border);background:var(--bg);color:var(--muted);border-radius:3px;padding:0 5px;cursor:pointer;margin-left:2px}
+  .mst-vbtn.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+  .mst-nn{display:inline-flex;flex-wrap:wrap;gap:3px}
+  .mst-ntag{font-size:9px;font-family:var(--mono);border:1px solid var(--border);border-radius:7px;padding:0 6px;color:var(--muted)}
+  .mst-ntag.mst-prim{border-color:var(--accent);color:var(--accent);font-weight:700}
+  .mst-ntag.mst-warn{border-color:var(--warn);color:var(--warn)}
+  .mst-proc0{padding-left:6px}
   .mst-xnodes{display:flex;flex-wrap:wrap;gap:3px 10px}
   .mst-xn{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--fg);font-family:var(--mono)}
   .mst-xn input{width:auto;margin:0}
@@ -2044,6 +2052,40 @@ function extraNodeChips(pid){   // 부가 소속 node(주 제외) — M:N 표시
   const par=mstParents(pid);if(par.length<=1)return '';
   return `<span class="mst-al">`+par.slice(1).map(n=>`<span class="mst-chip mst-xnode" title="부가 소속 node(주 아님)">+${esc(n)}</span>`).join("")+`</span>`;
 }
+// 공정(M) 관점 — 한 공정이 속한 node를 주(primary)+부가로 한 줄에. M:N을 직관적으로.
+function mstProcNodeTags(pid){
+  const par=mstParents(pid);
+  if(!par.length)return `<span class="mst-ntag mst-warn">소속 node 없음 ⚠</span>`;
+  return `<span class="mst-nn"><span class="mst-ntag mst-prim" title="주(primary) — 좌표 승격 기준">주 ${esc(par[0])}</span>`
+    +par.slice(1).map(n=>`<span class="mst-ntag" title="부가 소속 node">${esc(n)}</span>`).join("")+`</span>`;
+}
+function mstProcessViewHtml(procs,sel){   // 공정 관점(기본): 공정 나열 + 각자의 소속 node
+  if(!procs.length)return `<div class="ent-empty">등록된 process 없음 — + process 또는 자연어 CRUD</div>`;
+  let h="";
+  procs.slice().sort((a,b)=>String(a.id).localeCompare(b.id)).forEach(p=>{
+    h+=`<div class="mst-row mst-proc0${sel===p.id?" mst-on":""}" data-mstsel="${escAttr(p.id)}">
+      <span class="mst-lbl"><b>${esc(p.id)}</b>${aliasChips(p)}${p.label?`<span class="dim"> ${esc(p.label)}</span>`:''} <span class="dim">→</span> ${mstProcNodeTags(p.id)}</span>${mstActs("process",p.id)}</div>`;
+  });
+  return h+`<div class="mst-sub"><button class="btn mini" data-mstnew="process">+ process</button></div>`;
+}
+function mstNodeViewHtml(nodes,procs,sel){   // 노드 관점: 각 node 밑에 그 node를 (주/부가)로 갖는 공정 전부
+  let h="";
+  nodes.forEach(n=>{
+    h+=mstRowHtml(n,sel," mst-node");
+    procs.filter(p=>mstParents(p.id).some(x=>String(x).toLowerCase()===String(n.id).toLowerCase())).forEach(p=>{
+      const isPrim=String(mstParent(p.id)||"").toLowerCase()===String(n.id).toLowerCase();
+      h+=`<div class="mst-row mst-proc${sel===p.id?" mst-on":""}" data-mstsel="${escAttr(p.id)}">
+        <span class="mst-lbl"><span class="dim">└</span> <b>${esc(p.id)}</b>${aliasChips(p)}
+          <span class="mst-ntag${isPrim?' mst-prim':''}" title="${isPrim?'주(primary)':'부가 소속'}">${isPrim?'주':'부가'}</span>${p.label?`<span class="dim"> ${esc(p.label)}</span>`:''}</span>${mstActs("process",p.id)}</div>`;});
+    h+=`<div class="mst-sub"><button class="btn mini" data-mstnew="process" data-node="${escAttr(n.id)}">+ process (${esc(n.id)})</button></div>`;
+  });
+  const orphan=procs.filter(p=>!mstParents(p.id).length);   // 소속 node 미지정(비정상)
+  if(orphan.length){
+    h+=`<div class="mst-sec-h" style="color:var(--warn)">⚠ 소속 node 미지정 process</div>`;
+    orphan.forEach(p=>{h+=mstRowHtml(p,sel," mst-proc");});
+  }
+  return h;
+}
 // 행마다 항상 보이는 편집·삭제 버튼 — "무엇을 할 수 있는지"를 명확히(행 클릭도 편집됨)
 function mstActs(kind,id){
   return `<span class="mst-act">`
@@ -2059,21 +2101,13 @@ function renderMaster(){
   const ents=(state.mgraph&&state.mgraph.entities)||[];
   const sel=state.mstSel||"";
   const nodes=mstByKind("node"),procs=mstByKind("process");
-  const byNode={};procs.forEach(p=>{const n=mstParent(p.id)||"(미지정)";(byNode[n]=byNode[n]||[]).push(p);});
-  let h=`<div class="mst-sec"><div class="mst-sec-h">node → process
-      <span class="dim">${nodes.length} node · ${procs.length} process</span>
+  const view=state.mstView||"process";   // M:N — 공정(M) 관점 기본, 노드(N) 관점 토글
+  const viewTog=`<span class="mst-view">관점 <button class="mst-vbtn${view==='process'?' on':''}" data-mstview="process">공정</button><button class="mst-vbtn${view==='node'?' on':''}" data-mstview="node">노드</button></span>`;
+  let h=`<div class="mst-sec"><div class="mst-sec-h">${view==='process'?'공정 → 소속 node':'node → 공정'}
+      <span class="dim">${nodes.length} node · ${procs.length} process</span>${viewTog}
       <button class="btn mini" data-mstnew="node">+ node</button></div>`;
   if(!nodes.length)h+=`<div class="ent-empty">등록된 node 없음 — 아래 자연어 CRUD로 붙여넣거나 + node</div>`;
-  nodes.forEach(n=>{
-    h+=mstRowHtml(n,sel," mst-node");
-    (byNode[n.id]||[]).forEach(p=>{h+=`<div class="mst-row mst-proc${sel===p.id?" mst-on":""}" data-mstsel="${escAttr(p.id)}">
-        <span class="mst-lbl"><span class="dim">└</span> <b>${esc(p.id)}</b>${aliasChips(p)}${extraNodeChips(p.id)}${p.label?`<span class="dim"> ${esc(p.label)}</span>`:''}</span>${mstActs("process",p.id)}</div>`;});
-    h+=`<div class="mst-sub"><button class="btn mini" data-mstnew="process" data-node="${escAttr(n.id)}">+ process (${esc(n.id)})</button></div>`;
-  });
-  if((byNode["(미지정)"]||[]).length){   // 소속 node 없는 process(비정상) — 눈에 띄게
-    h+=`<div class="mst-sec-h" style="color:var(--warn)">⚠ 소속 node 미지정 process</div>`;
-    byNode["(미지정)"].forEach(p=>{h+=mstRowHtml(p,sel," mst-proc");});
-  }
+  else h+=(view==="process"?mstProcessViewHtml(procs,sel):mstNodeViewHtml(nodes,procs,sel));
   h+=`</div>`;
   [["product","제품"],["project","과제"]].forEach(([kind,ko])=>{
     const list=mstByKind(kind);
@@ -2917,6 +2951,8 @@ document.addEventListener("click",e=>{
   if(e.target.id==="btnMstSample"){$("#mstSeedText").value=MST_SAMPLE.text;$("#mstGuide").value=MST_SAMPLE.guide;toast("기준정보 샘플을 채웠습니다 — 계획 생성을 눌러보세요");return;}
   if(e.target.id==="btnMstPlan"){mstPlan();return;}
   if(e.target.id==="btnMstApply"){mstApply();return;}
+  const mview=e.target.closest("[data-mstview]");
+  if(mview){state.mstView=mview.dataset.mstview;renderMaster();return;}
   const mnew=e.target.closest("[data-mstnew]");
   if(mnew){state.mstEdit={typ:mnew.dataset.mstnew,isNew:true,node:mnew.dataset.node||null};
     state.mstSel=null;renderMaster();return;}
