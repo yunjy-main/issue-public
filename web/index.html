@@ -1100,7 +1100,8 @@ function saveRuns(){try{localStorage.setItem(LS_RUNS,JSON.stringify((state.runs|
   runId:r.runId,sourceId:r.sourceId,snippet:r.snippet,status:r.status,
   reviews:r.reviews,committed:r.committed,commitMsg:r.commitMsg,startedAt:r.startedAt,
   guide:r.guide,phase:r.phase,pre:r.pre,
-  flow:r.flow,events:r.events,mapping:r.mapping,evReviews:r.evReviews}))));}catch(e){}}   // 게이트·사건검토 복원용
+  flow:r.flow,events:r.events,mapping:r.mapping,evReviews:r.evReviews,
+  evEdits:r.evEdits,evEditOpen:r.evEditOpen}))));}catch(e){}}   // 게이트·사건검토·편집 복원용
 function loadRunsLS(){try{return JSON.parse(localStorage.getItem(LS_RUNS)||"[]")||[];}catch(e){return[];}}
 
 // 전송: CAPTURE → 히스토리 박스 즉시 생성 → 입력 set 초기화 → EXTRACT 비동기 발사·독립 폴링
@@ -1586,13 +1587,16 @@ async function restoreRuns(){
         let alive=false;
         try{alive=(await fetch("api/source_text?id="+encodeURIComponent(s.sourceId))).ok;}catch(e){}
         if(alive){
-          let st=s.status;let err=null;
-          if(st==="running"){st="error";err="새로고침으로 중단됨 — 다시 전송하세요";}
-          state.runs.push({runId:s.runId,sourceId:s.sourceId,snippet:s.snippet,guide:s.guide||null,
-            flow:s.flow||null,status:st,phase:s.phase,pre:s.pre||null,error:err,
+          // 추출 중 새로고침으로 끊긴 running → 실패 대신 원문(source)으로 파이프라인 재개.
+          const resume=(s.status==="running");
+          const run={runId:s.runId,sourceId:s.sourceId,snippet:s.snippet,guide:s.guide||null,
+            flow:s.flow||null,status:s.status,phase:s.phase,pre:s.pre||null,error:null,
             events:s.events||null,mapping:s.mapping||null,evReviews:s.evReviews||{},
+            evEdits:s.evEdits||{},evEditOpen:s.evEditOpen||{},
             committed:s.committed||false,commitMsg:s.commitMsg,reviews:s.reviews||{},proposal:null,
-            startedAt:s.startedAt,_t0:Date.now()});
+            startedAt:s.startedAt,_t0:Date.now()};
+          if(resume)run._resume=true;
+          state.runs.push(run);
         }
       }
       continue;   // 그 외 서버가 모르는 run(초기화 등) → 히스토리에서 자동 제거
@@ -1610,7 +1614,11 @@ async function restoreRuns(){
     state.runs.push(run);
   }
   renderHistory();
-  state.runs.forEach(run=>{if(run.status==="running")pollRunBox(run);});
+  state.runs.forEach(run=>{
+    if(run.status!=="running")return;
+    if(run._resume){delete run._resume;preflight(run);}   // 사건 흐름: 원문으로 재개(새로고침 중단 복구)
+    else pollRunBox(run);                                  // 레거시 EXTRACT: 서버 job 폴링
+  });
   saveRuns();
 }
 
