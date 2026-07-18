@@ -537,7 +537,11 @@ def handle_step(body):
 
     if step == "ENTITY_EDIT":   # 후처리 편집 (편집가능 필드만) — M5
         eid = inp.get("id")
-        ent, rejected = store.edit_entity(eid, inp.get("patch") or {}, inp.get("actor", "human"))
+        patch = dict(inp.get("patch") or {})
+        if patch.get("urls") is not None:   # URL은 {url,kind,issue_key}로 정규화(Jira키 추출 포함)
+            import links
+            patch["urls"] = links.normalize(patch["urls"])
+        ent, rejected = store.edit_entity(eid, patch, inp.get("actor", "human"))
         if ent is None:
             raise StepError("E-1002", "엔티티 없음: %s" % eid, 404)
         return ok({"entity": ent, "rejected": rejected}, ["ENTITY_EDIT", "STOP"])
@@ -782,7 +786,10 @@ def handle_step(body):
 
     # ---------- 이슈 CRUD — 사람이 만드는 주제 컨테이너 (전통 폼 + 자연어) ----------
     if step == "ISSUE_CREATE":   # 전통 폼: 사람이 이슈 등록 (좌표는 마스터에서만)
+        import links
         f = dict(inp.get("fields") or {})
+        if f.get("urls") is not None:   # 폼이 준 URL(문자열/리스트) → {url,kind,issue_key} 정규화
+            f["urls"] = links.normalize(f["urls"])
         if not (f.get("title") or "").strip():
             raise StepError("E-4401", "제목(title)은 필수입니다", 422)
         miss = _coord_missing({k: f.get(k) for k in ("node", "process", "product", "project")})
@@ -801,8 +808,10 @@ def handle_step(body):
         except llm.LLMError as e:
             raise StepError(e.code, str(e), 502)
         import master as master_mod
+        import links
         mg = store.get_master()
         text_coords = master_mod.resolve(text, mg)["coordinates"]   # 입력 원문의 결정론 좌표(별칭→정준·승격)
+        text_urls = links.extract_links(text)   # 원문의 Jira·Confluence·EDM 링크(결정론)
         by_id = {e["id"].lower(): e for e in issues}
         plan = []
         for it in res["items"]:
@@ -815,7 +824,7 @@ def handle_step(body):
                 row = {"op": "create", "title": it.get("title"), "summary": it.get("summary"),
                        "coordinates": coords, "status": it.get("status"), "severity": it.get("severity"),
                        "start_date": it.get("start_date"), "deadline": it.get("deadline"),
-                       "evidence": it.get("evidence"), "confidence": it.get("confidence")}
+                       "urls": text_urls, "evidence": it.get("evidence"), "confidence": it.get("confidence")}
                 miss = _coord_missing(coords)
                 if not (it.get("title") or "").strip():
                     row["warn"] = "제목 없음"
@@ -869,6 +878,8 @@ def handle_step(body):
                     for k in ("title", "summary", "status", "severity", "start_date", "deadline"):
                         if row.get(k):
                             f[k] = row[k]
+                    if row.get("urls"):
+                        f["urls"] = row["urls"]
                     e = store.create_entity("issue", f, actor)
                     applied.append({"op": op, "id": e["id"]})
                 elif op == "update":
@@ -886,6 +897,7 @@ def handle_step(body):
     # ---------- 사건 추출 → 이슈 매핑 (기계가 사건을 뽑아 사람 이슈에 붙임) ----------
     if step == "EVENT_EXTRACT":   # 확정 좌표 하에서 사건만 추출(이슈 안 만듦)
         import master as master_mod
+        import links
         sid = inp.get("source_id")
         docs = (store.get_struct_docs(sid) or {}).get("docs") if sid else None
         if docs is None:
@@ -899,9 +911,11 @@ def handle_step(body):
         mg = store.get_master()
         events = []
         for d in docs:
-            coords = master_mod.resolve(d.get("body_clean") or "", mg)["coordinates"]
+            body = d.get("body_clean") or ""
+            coords = master_mod.resolve(body, mg)["coordinates"]
+            doc_urls = links.extract_links(body)   # 이 문서(메시지)의 Jira·Confluence·EDM 링크(결정론)
             try:
-                evs = llm.extract_events(d.get("body_clean") or "", coords, ref, guide)
+                evs = llm.extract_events(body, coords, ref, guide)
             except llm.LLMError as e:
                 raise StepError(e.code, str(e), 502)
             for ev in evs:
@@ -910,6 +924,8 @@ def handle_step(body):
                     ev[k] = coords.get(k)
                 ev["source_refs"] = ["%s#%s" % (sid, d.get("doc_id", ""))] if sid else []
                 ev["title"] = ev.get("what")
+                if doc_urls:
+                    ev["urls"] = doc_urls
                 events.append(ev)
         for i, ev in enumerate(events, 1):   # 문서 넘어 temp_id 유일화
             ev["temp_id"] = "ev%d" % i

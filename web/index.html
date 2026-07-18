@@ -120,7 +120,7 @@
   .run-in textarea:focus{outline:1px solid var(--accent);outline-offset:-1px}
   .run-ctl{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
   .run-ctl select,.btn{font:inherit;font-size:12px;border:1px solid var(--border);border-radius:6px;
-    background:var(--panel);color:var(--fg);padding:5px 12px;cursor:pointer}
+    background:var(--panel);color:var(--fg);padding:5px 12px;cursor:pointer;white-space:nowrap}
   .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
   .btn:disabled{opacity:.5;cursor:default}
   .runmsg{font-size:11px;color:var(--muted);min-height:15px}
@@ -286,6 +286,12 @@
   .ev-props{margin-top:6px;padding:5px 7px;border:1px dashed var(--border);border-radius:5px;background:var(--chip)}
   .ev-props-h{font-size:10px;font-weight:700;margin-bottom:2px}
   .ev-prop{font-size:11px;margin:1px 0}
+  /* ---- 엔티티 관련 링크(URL) ---- */
+  .ent-urls{display:flex;flex-direction:column;gap:3px}
+  .ent-url{display:flex;gap:5px;align-items:baseline;font-size:11px;min-width:0}
+  .ent-url a{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .url-kind{font-size:9px;font-weight:700;padding:0 5px;border-radius:8px;background:var(--chip);white-space:nowrap;font-family:var(--mono);flex:none}
+  .uk-jira{background:#2563eb;color:#fff}.uk-confluence{background:#0ea5e9;color:#fff}.uk-edm{background:#16a34a;color:#fff}
   /* ---- 가이드 입력(본문과 UI상 분리, 전송 시 함께) ---- */
   .guide-in{margin-top:2px}
   .guide-h{font-size:9.5px;font-weight:700;color:var(--muted);margin-bottom:3px}
@@ -309,9 +315,10 @@
   .if-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
   .if-grid .if-wide{grid-column:1/-1}
   .if-grid .edf>span{display:block;font-size:10px;color:var(--muted);margin-bottom:2px}
-  .if-grid input,.if-grid select,.if-grid textarea{width:100%;font-size:11.5px;padding:3px 5px;
-    border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-family:inherit}
-  .if-grid textarea{min-height:38px;resize:vertical}
+  .if-grid input,.if-grid select,.if-grid textarea{width:100%;font:inherit;font-size:12px;padding:5px 8px;
+    border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--fg);outline:none}
+  .if-grid textarea{min-height:44px;resize:vertical;line-height:1.5}
+  .if-grid input:focus,.if-grid select:focus,.if-grid textarea:focus{outline:1px solid var(--accent);outline-offset:-1px}
   @media(max-width:560px){.if-grid{grid-template-columns:1fr}}
   /* ---- 기준정보(마스터) 탭 ---- */
   .mst-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 0 8px;border-bottom:1px solid var(--border);margin-bottom:8px}
@@ -336,9 +343,10 @@
   .mst-form-h{font-size:11px;font-weight:700;margin-bottom:6px;display:flex;gap:5px;align-items:center}
   .mst-form .edf{display:block;margin-bottom:6px}
   .mst-form .edf>span{display:block;font-size:10px;color:var(--muted);margin-bottom:2px}
-  .mst-form input,.mst-form select,.mst-form textarea{width:100%;font-size:11.5px;padding:3px 5px;
-    border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-family:inherit}
-  .mst-form textarea{min-height:44px;resize:vertical}
+  .mst-form input,.mst-form select,.mst-form textarea{width:100%;font:inherit;font-size:12px;padding:5px 8px;
+    border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--fg);outline:none}
+  .mst-form textarea{min-height:44px;resize:vertical;line-height:1.5}
+  .mst-form input:focus,.mst-form select:focus,.mst-form textarea:focus{outline:1px solid var(--accent);outline-offset:-1px}
   .mst-form input[readonly]{opacity:.6}
   .req{color:var(--bad)}
   .btn.danger{color:var(--bad);border-color:var(--bad)}
@@ -347,8 +355,12 @@
   .seed-panel{border:1px dashed var(--border);border-radius:6px;padding:8px;margin-bottom:9px;background:var(--chip)}
   .seed-h{font-size:10px;font-weight:700;color:var(--muted);margin-bottom:4px}
   .seed-h .dim{font-weight:400}
-  #mstSeedText{width:100%;min-height:104px;font-family:var(--mono);font-size:10.5px;padding:5px;
-    border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);resize:vertical}
+  /* CRUD 입력 텍스트박스 = 원문(.run-in textarea)과 동일 스타일, 높이만 다르게 */
+  #mstSeedText,#issNLText,#mstGuide,#issNLGuide{width:100%;resize:vertical;background:var(--panel);
+    color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px;font:inherit;line-height:1.5;outline:none}
+  #mstSeedText,#issNLText{min-height:96px}
+  #mstGuide,#issNLGuide{min-height:44px}
+  #mstSeedText:focus,#issNLText:focus,#mstGuide:focus,#issNLGuide:focus{outline:1px solid var(--accent);outline-offset:-1px}
   .seed-ctl{display:flex;gap:6px;align-items:center;margin-top:5px;flex-wrap:wrap}
   .seed-ctl .dim{font-size:10px}
   .plan-h{font-size:10.5px;margin:7px 0 3px}
@@ -425,8 +437,10 @@
   .ent-edit{display:flex;flex-direction:column;gap:6px;margin-top:8px}
   .edf{display:flex;flex-direction:column;gap:2px}
   .edf>span{font-size:10px;color:var(--muted)}
-  .edf input,.edf textarea,.edf select{font:inherit;font-size:12px;background:var(--bg);color:var(--fg);
-    border:1px solid var(--border);border-radius:5px;padding:4px 7px;width:100%}
+  .edf input,.edf textarea,.edf select{font:inherit;font-size:12px;background:var(--panel);color:var(--fg);
+    border:1px solid var(--border);border-radius:6px;padding:5px 8px;width:100%;outline:none;line-height:1.5}
+  .edf textarea{min-height:44px;resize:vertical}
+  .edf input:focus,.edf textarea:focus,.edf select:focus{outline:1px solid var(--accent);outline-offset:-1px}
   .edf textarea{min-height:44px;resize:vertical;line-height:1.4}
   .edf-protected{font-size:10px;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:5px 8px;margin-top:2px}
   .edf-actions{display:flex;gap:6px;margin-top:4px}
@@ -1758,6 +1772,7 @@ function issueFormHtml(){
       ${SEL("상태","status",["정의","원인탐색","원인분석","원인발견","해결책탐색","재발방지","해결중","종결","보류","재발"])}
       ${SEL("중요도","severity",["S1","S2","S3","S4"])}
       ${S("시작일","start_date","YYYY-MM-DD")}${S("데드라인","deadline","YYYY-MM-DD")}
+      <label class="edf if-wide"><span>관련 URL <span class="dim">한 줄에 하나 — Jira·Confluence·EDM. Jira는 이슈키 자동 추출</span></span><textarea data-if="urls" placeholder="https://jira.acme.com/browse/GPIO-123&#10;https://conf.acme.com/wiki/..."></textarea></label>
     </div>
     <div class="seed-ctl"><button class="btn primary" id="btnIssueSave">이슈 등록</button>
       <button class="btn" id="btnIssueCancel">취소</button>
@@ -2095,6 +2110,17 @@ async function removeRelation(rid){
     await ensureIssueData(true);toast("관계를 해제했습니다");if(cur)openEntity(cur);}
   catch(err){alert("관계 해제 실패: "+(err.code?err.code+" ":"")+err.message);}
 }
+// 엔티티의 관련 링크(Jira·Confluence·EDM) — 결정론 추출된 {url,kind,issue_key}. Jira는 키 뱃지.
+const URL_KIND_LBL={jira:"JIRA",confluence:"Confluence",edm:"EDM",other:"링크"};
+function urlsHtml(e){
+  const u=e.urls||[];if(!u.length)return"";
+  return `<div class="ent-sec"><h4>관련 링크 ${u.length}</h4><div class="ent-urls">`+
+    u.map(x=>{
+      const k=x.kind||"other";
+      const badge=`<span class="url-kind uk-${esc(k)}">${esc(URL_KIND_LBL[k]||"링크")}${x.issue_key?" "+esc(x.issue_key):""}</span>`;
+      return `<div class="ent-url">${badge}<a href="${escAttr(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.url)}</a></div>`;
+    }).join("")+`</div></div>`;
+}
 async function openEntity(id){
   const box=$("#entDetail");
   box.innerHTML='<span class="ent-back" data-back="1">‹ 이슈 목록</span><div class="ent-empty">불러오는 중…</div>';
@@ -2162,6 +2188,7 @@ async function openEntity(id){
     `<div class="ent-sec"><h4>관계 ${relCount} <span class="rel-sub">(type별·시간순)</span></h4>`+
       (relCount?relHtml:'<div class="ent-empty">연결된 관계 없음</div>')+relAddHtml(e)+`</div>`+
     (e.tags&&e.tags.length?`<div class="ent-sec"><h4>태그</h4><div class="ent-refs">#${e.tags.map(esc).join(" #")}</div></div>`:'')+
+    urlsHtml(e)+
     (e.source_refs&&e.source_refs.length?`<div class="ent-sec"><h4>출처</h4><div class="ent-refs">${e.source_refs.map(esc).join("  ")}</div></div>`:'')+
     `<div class="ent-sec"><h4>메타</h4><div class="ent-kv">추출기 ${esc((e.produced_by&&e.produced_by.name)||'?')} · 갱신 ${esc(e.updated_at||'')}</div></div>`+
     `<div class="ent-sec"><h4>검토 이력</h4><div id="entHist" class="hist-list"><span class="ent-empty">불러오는 중…</span></div></div>`+
@@ -2206,6 +2233,7 @@ function entEditHtml(e){
   f+=F("발생일 (occurred_at)","occurred_at",e.occurred_at,"YYYY-MM-DD")+SEL("확실성 (date_confidence)","date_confidence",e.date_confidence,["exact","approximate","uncertain"]);
   f+=F("시작일 (start_date)","start_date",e.start_date,"YYYY-MM-DD")+F("데드라인 (deadline)","deadline",e.deadline,"YYYY-MM-DD");
   f+=F("태그 (tags, 쉼표구분)","tags",(e.tags||[]).join(", "));
+  f+=TA("관련 URL (한 줄에 하나 — Jira 이슈키 자동추출)","urls",(e.urls||[]).map(u=>u.url||u).join("\n"));
   f+=`<label class="edf"><span>유형 재분류 (type) ⚠ 새 ID 발급·관계 이관</span><select data-ef="type">`+ETYPES.map(t=>`<option ${t===e.type?'selected':''}>${t}</option>`).join("")+`</select></label>`;
   return `<span class="ent-back" data-back="1">‹ 이슈 목록</span>
     <div class="ent-head"><span class="ty-badge ${tyCls(e.type)}">${esc(e.type)}</span><span class="eid">${esc(e.id)}</span> <b style="color:var(--accent)">편집 모드</b></div>

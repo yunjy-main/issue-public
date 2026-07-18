@@ -96,7 +96,7 @@ def merge_severity(a, b):
 # type은 일반 편집이 아니라 재분류(reclassify_entity)로 — ID 접두사 교정 + 관계 이관.
 EDITABLE_FIELDS = ("title", "summary", "node", "process", "product", "project",
                    "start_date", "deadline", "occurred_at", "date_confidence",
-                   "date_note", "tags", "status", "severity", "closed_at")
+                   "date_note", "tags", "status", "severity", "closed_at", "urls")
 
 
 def create_entity(etype, fields, actor="human"):
@@ -117,7 +117,7 @@ def create_entity(etype, fields, actor="human"):
 
 
 _EVENT_FIELDS = ("title", "summary", "kind", "who", "occurred_at", "date_confidence",
-                 "node", "process", "product", "project", "evidence")
+                 "node", "process", "product", "project", "evidence", "urls")
 
 
 def create_event(fields, actor="human"):
