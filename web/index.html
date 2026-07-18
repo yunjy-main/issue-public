@@ -141,6 +141,7 @@
   .cand-h .rev button.acc.on{background:var(--ok);border-color:var(--ok)}
   .cand-h .rev button.rej.on{background:var(--bad);border-color:var(--bad)}
   .cand-h .rev button.edt.on{background:var(--accent);border-color:var(--accent)}
+  .cand-h .rev button.skp.on{background:var(--muted);border-color:var(--muted)}
   .cand-b{padding:6px 8px;font-size:11.5px}
   .cand-b .ttl{font-weight:600}
   .cand-b .ref{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:2px}
@@ -148,7 +149,7 @@
     border-radius:4px;padding:3px 6px;font:inherit;font-size:11.5px}
   .cand-b select.ed{margin-top:4px;font-size:11px;background:var(--bg);color:var(--fg);border:1px solid var(--accent);border-radius:4px;padding:2px}
   .cand-list{margin:4px 0}
-  .cand.cand-skip{opacity:.82}
+  .cand.cand-skip{opacity:1}
   .cand-h .plan-op{font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase}
   .cand-h .cand-ttl{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px}
   .cand-b .plan-det{color:var(--muted);font-size:11px}
@@ -2246,11 +2247,11 @@ function loadCrudRuns(){
 let _ridN=0; function genRid(kind){_ridN++;return (kind==="mst"?"MRUN-":"IRUN-")+Date.now()+"-"+_ridN;}
 // 기본 결정: create/update=수락, delete=거절(파괴적·명시 요구), skip=변경없음(비적용, 편집 시 update 승격)
 function crudDefaultRev(op){return op==="skip"?"skip":op==="delete"?"reject":"accept";}
-// 모든 항목 동일한 accept·edit·reject (입력·이슈 탭과 일치). skip은 편집 시 update로 승격(crudApplyRow).
+// 모든 항목 동일한 accept·edit·skip·reject (skip도 accept와 같은 층위의 버튼). skip 편집 시 update 승격.
 function crudRevBtns(kind,i,dec,op){
   const on=x=>dec===x?" on":"";
   const b=(cls,rev,txt)=>`<button class="${cls}${on(rev)}" data-crudrev="${rev}" data-crudkind="${kind}" data-crudix="${i}">${txt}</button>`;
-  return `<span class="rev">${b("acc","accept","accept")}${b("edt","edit","edit")}${b("rej","reject","reject")}</span>`;
+  return `<span class="rev">${b("acc","accept","accept")}${b("edt","edit","edit")}${b("skp","skip","skip")}${b("rej","reject","reject")}</span>`;
 }
 function crudMstDet(p){
   if(p.op==="create")return (p.node?`node=${esc(p.node)} `:'')+((p.aliases||[]).length?`별칭 ${p.aliases.map(esc).join(", ")}`:'');
@@ -2260,14 +2261,14 @@ function crudMstDet(p){
     if(c.node)b.push(`node ${esc(c.node.from||'—')} → ${esc(c.node.to)}`);
     return b.join(" · ");}
   if(p.op==="delete")return "삭제 요청";
-  return esc(p.why||"변경 없음");
+  return "";   // skip: 텍스트 없이 skip 버튼(층위)로만 표시
 }
 function crudIssDet(p){
   if(p.op==="create"){const c=p.coordinates||{};const co=["node","process","product","project"].map(k=>c[k]).filter(Boolean).join("/");
     return (co?co+" · ":"")+esc(p.status||"")+(p.severity?" "+esc(p.severity):"");}
   if(p.op==="update"){const pt=p.patch||{};return Object.keys(pt).map(k=>k+"="+esc(pt[k])).join(" · ");}
   if(p.op==="delete")return "삭제(휴지통)";
-  return esc(p.warn||"변경 없음");
+  return "";   // skip: 텍스트 없이 skip 버튼(층위)로만 표시
 }
 function crudEditFieldsHtml(kind,i,p,patch){   // edit 모드 인라인 입력 — apply가 소비하는 필드만
   const v=k=>escAttr(patch[k]!=null?patch[k]:"");
@@ -2298,15 +2299,15 @@ function crudReviewListHtml(kind,s){
     const label=kind==="mst"?(p.id||"(id 없음)"):(p.op==="create"?(p.title||"(제목 없음)"):(p.id+(p.title?" "+p.title:"")));
     const tyb=kind==="mst"?`<span class="ty">${esc(p.type||"")}</span>`:`<span class="ty issue">${p.op==="create"?"신규 이슈":"이슈"}</span>`;
     const ed=dec==="edit";
+    const body=(det?`<div class="plan-det">${det}</div>`:'')
+      +(p.warn?`<div class="plan-warn">⚠ ${esc(p.warn)}</div>`:'')
+      +(ed?crudEditFieldsHtml(kind,i,p,patch):'');
     return `<div class="cand ${dec==='reject'?'rej':''}${p.op==="skip"?" cand-skip":""}">
       <div class="cand-h">${tyb}<span class="plan-op">${sign} ${esc(p.op)}</span>
         <b class="cand-ttl">${esc(label).slice(0,44)}</b>
         ${p.confidence?`<span class="cf">${esc(p.confidence)}</span>`:''}
         ${crudRevBtns(kind,i,dec,p.op)}</div>
-      <div class="cand-b"><div class="plan-det">${det}</div>
-        ${p.warn?`<div class="plan-warn">⚠ ${esc(p.warn)}</div>`:''}
-        ${ed?crudEditFieldsHtml(kind,i,p,patch):''}
-      </div></div>`;
+      ${body?`<div class="cand-b">${body}</div>`:''}</div>`;
   }).join("")+`</div>`;
 }
 // 항목 → 적용 행(row) 또는 null(적용 대상 아님). reject/경고=null, skip은 편집 시 update로 승격.
