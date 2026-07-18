@@ -973,99 +973,94 @@ function toast(msg){let t=document.getElementById("toast");
 function runBusy(b){$("#btnExtract").disabled=b;}
 /* ---------- 샘플 시나리오 (입력 하단 grid, 탭하면 원문 등장) ---------- */
 const SAMPLES=[
- {fmt:"메신저",kind:"별 문제없음",color:"#1a7f37",title:"N7 GPIO-A 재검증 clean 통과",
-  text:`[사내 메신저 · 알파과제 채널]
-김선임: N7 알파과제 GPIO-A ESD 재검증 결과 나왔나요?
-이책임: 방금 확인했어요. rule deck v1.2로 다시 돌렸고 clamp spacing 포함 전부 clean 통과입니다.
-김선임: 오 좋네요. 그럼 특이사항 없는 거죠?
+ {fmt:"메신저",kind:"이벤트 혼합(E2E)",color:"#6941c6",title:"★ Falcon CDM·rule deck·GPIO-A·Titan 뒤섞인 스레드",
+  text:`[사내 메신저 · ESD QA 채널]
+정선임: Falcon SerDes-PHY 건 업데이트요. 어제 N5P CDM 재측정에서 500V fail 3건 더 나왔습니다. 총 6건이네요.
+박책임: IO ring 클램프 재검토하기로 결정했습니다. 다음 주까지 레이아웃 대안 2개 보겠습니다.
+정선임: 그리고 N5P rule deck 버전이 아직도 v3.1 / v3.2 섞여 있어요. 사인오프 기준 통일이 필요합니다.
+이책임: 참고로 N7P GPIO-A HBM 재검증은 clean 통과했습니다. 이쪽은 문제 없어요.
+김PL: 별건으로, Titan PLL-C 신규 과제 다음 달 킥오프 예정입니다. 일정 공유드려요.`},
+ {fmt:"메신저",kind:"별 문제없음(무관)",color:"#1a7f37",title:"N7P GPIO-A 재검증 clean 통과",
+  text:`[사내 메신저 · QA 채널]
+김선임: N7P GPIO-A ESD 재검증 결과 나왔나요?
+이책임: 방금 확인했어요. clamp spacing 포함 전부 clean 통과입니다.
+김선임: 오 좋네요. 특이사항 없는 거죠?
 이책임: 넵 이슈 없습니다. 다음 마일스톤 그대로 가면 됩니다.`},
- {fmt:"메일",kind:"이슈인지 애매함",color:"#9a6700",title:"N5 CLK-PLL latch-up 마진 문의",
-  text:`제목: [공유/문의] N5 CLK-PLL latch-up 마진 관련
+ {fmt:"메일",kind:"이슈인지 애매함",color:"#9a6700",title:"N5P SerDes-PHY latch-up 마진 문의",
+  text:`제목: [공유/문의] N5P SerDes-PHY latch-up 마진 관련
 보낸사람: 설계팀 박책임
 
-안녕하세요. N5 CLK-PLL 관련 하나 여쭙니다.
+안녕하세요. N5P SerDes-PHY 관련 하나 여쭙니다.
 최근 시뮬에서 latch-up 마진이 예전보다 조금 낮아 보인다는 얘기가 있었는데,
 측정한 건 아니고 감으로 느낀 정도입니다.
-공정 리비전이 바뀐 영향인지 시뮬 셋업 문제인지 확실치 않습니다.
+공정 리비전 영향인지 시뮬 셋업 문제인지 확실치 않습니다.
 비슷한 사례가 있었는지, 더 봐야 할지 의견 부탁드립니다.`},
- {fmt:"회의록",kind:"이슈사항",color:"#cf222e",title:"N7 GPIO-B ESD 사인오프 충돌",
-  text:`제목: N7 MPW3 GPIO-B ESD 사인오프 이슈
-채널: 2026-07-11 알파과제 QA 주간회의
-
-- GPIO-B ESD IP 3.0은 rule deck v1.1 기준으로 검증 완료.
-- 그러나 사인오프 기준은 v1.3이며, v1.3 신규 latch-up 규칙과 IP 구조가 충돌.
-- 이대로면 사인오프 불가. waive 또는 IP 수정 중 결정 필요.
-- 착수 2026-07-06, 사인오프 데드라인 2026-07-24.
-- 담당: ESD QA. 조치: v1.3 규칙 적용 가부 판단 후 waive 신청 검토.`},
- {fmt:"속보",kind:"불량보고",color:"#a40e26",title:"GPIO-A 고객 ORT ESD 실패 2건",
-  text:`[속보] N7 알파과제 GPIO-A, 고객 ORT에서 ESD 실패 2건 발생 (HBM 2kV fail). 로트 A123, 오늘 오전 확인.`},
- {fmt:"메일",kind:"불량원인보고",color:"#6941c6",title:"GPIO-A HBM fail 원인 분석",
-  text:`제목: [원인분석] N7 GPIO-A ESD HBM fail 원인 보고
+ {fmt:"메일",kind:"불량원인보고(유관)",color:"#a40e26",title:"Falcon SerDes-PHY CDM fail 원인 분석",
+  text:`제목: [원인분석] Falcon N5P SerDes-PHY CDM fail 원인 보고
 보낸사람: ESD QA 정선임
 
-지난주 보고된 GPIO-A HBM 2kV fail(로트 A123) 원인 분석 결과입니다.
-- 근본원인: clamp 소자 배치가 rule deck v1.2 신규 clamp spacing 규칙을 위반. 실리콘에서 spacing 부족으로 ESD 전류경로 저항이 증가.
-- 유입경로: IP 2.1은 v0.9 기준으로 released 되어 v1.2 신규 규칙 미반영 상태로 사인오프됨(버전 불일치).
-- 조치: IP 2.2에서 clamp spacing 수정, 알파·베타과제 공통 적용. 재검증 데드라인 2026-07-30.
-- 재발방지: released IP 목록과 사인오프 rule deck 버전 자동 대조 체크 추가 제안.`},
- {fmt:"회의록",kind:"QA이슈",color:"#2563eb",title:"릴리스 rule deck 버전관리 프로세스",
-  text:`제목: [QA] 릴리스 rule deck 버전 관리 프로세스 이슈
+Falcon SerDes-PHY의 CDM 500V fail 원인 분석 결과입니다.
+- 근본원인: IO ring clamp 소자 배치가 rule deck v3.2 신규 clamp spacing 규칙을 위반. 실리콘에서 spacing 부족으로 ESD 전류경로 저항 증가.
+- 유입경로: SerDes-PHY IP가 rule deck v3.1 기준으로 released되어 v3.2 신규 규칙 미반영 상태로 사인오프됨(버전 불일치).
+- 조치: IP 리비전에서 clamp spacing 수정, Falcon 재검증 데드라인 2026-07-30.`},
+ {fmt:"회의록",kind:"프로세스 이슈",color:"#2563eb",title:"릴리스 rule deck 버전관리 프로세스",
+  text:`제목: [QA] 릴리스 rule deck 버전 관리 프로세스
 채널: 2026-07-12 라이브러리팀 QA 정기회의
 
-- 최근 GPIO-A 불량이 released IP와 사인오프 rule deck 버전 불일치에서 비롯됨.
-- 문제: 과제별 rule deck 버전이 제각각인데, released IP가 어느 버전으로 검증됐는지 추적하는 표준 절차가 없음.
-- 병렬 개발(알파·베타·감마 과제)에서 이 불일치가 구조적으로 반복될 위험.
-- 제안: 기준정보(PDK 버전·released IP 목록)에 '검증 rule deck 버전' 필드 필수화 + 사인오프 게이트 자동 검증.
+- 최근 Falcon 불량이 released IP와 사인오프 rule deck 버전 불일치에서 비롯됨.
+- 문제: 과제별 rule deck 버전(v3.1/v3.2)이 제각각인데, released IP가 어느 버전으로 검증됐는지 추적하는 표준 절차가 없음.
+- 병렬 개발(Falcon·Titan)에서 이 불일치가 구조적으로 반복될 위험.
+- 제안: 기준정보에 '검증 rule deck 버전' 필드 필수화 + 사인오프 게이트 자동 검증.
 - 담당: QA 프로세스 TF. 목표: 2026-08-15 파일럿.`},
 ];
 // ESD 이슈 생애주기 시퀀스 (①→⑦ 순서 전송 시 하나의 이슈가 진화 → 온톨로지 누적/연결)
 const SEQ=[
- {fmt:"메일",kind:"①일상 메일",color:"#67717c",title:"알파과제 주간 진행 현황 (특이사항 없음)",
-  text:`제목: [주간공유] 알파과제 7월 2주차 진행 현황
-보낸사람: 알파과제 PL
+ {fmt:"메일",kind:"①일상 메일",color:"#67717c",title:"Falcon 주간 진행 현황 (특이사항 없음)",
+  text:`제목: [주간공유] Falcon 7월 2주차 진행 현황
+보낸사람: Falcon PL
 
-이번 주 알파과제(N7, GPIO-A) 진행은 계획대로입니다.
+이번 주 Falcon(N5P, SerDes-PHY) 진행은 계획대로입니다.
 ESD 재검증 일정도 예정대로 진행 중이고 특이사항 없습니다.
-다음 주 사인오프 리허설 준비하겠습니다.`},
- {fmt:"메일",kind:"②성능저하(fail아님)",color:"#9a6700",title:"N7 GPIO-A HBM 마진 하락 경향",
-  text:`제목: [공유] N7 GPIO-A HBM 마진 하락 경향
+다음 주 고객A tape-out 리허설 준비하겠습니다.`},
+ {fmt:"메일",kind:"②성능저하(fail아님)",color:"#9a6700",title:"N5P SerDes-PHY CDM 마진 하락 경향",
+  text:`제목: [공유] N5P SerDes-PHY CDM 마진 하락 경향
 보낸사람: ESD QA
 
-최근 N7 GPIO-A의 HBM 특성이 이전 2.5kV에서 2.1kV로 낮아지는 경향이 관찰됩니다.
-아직 스펙(2kV)은 만족하므로 fail은 아니지만, 하락 추세가 있어 모니터링이 필요해 보입니다.
+최근 Falcon N5P SerDes-PHY의 CDM 특성이 이전 750V에서 550V로 낮아지는 경향이 관찰됩니다.
+아직 스펙(500V)은 만족하므로 fail은 아니지만, 하락 추세가 있어 모니터링이 필요해 보입니다.
 원인은 아직 불명확합니다.`},
- {fmt:"속보",kind:"③fail 발생",color:"#cf222e",title:"GPIO-A 고객 ORT HBM 2kV fail 2건",
-  text:`[속보] N7 알파과제 GPIO-A, 고객 ORT에서 HBM 2kV fail 2건 발생. 로트 A123, 오늘 오전 확인. 스펙 미달로 정식 불량 처리 필요.`},
- {fmt:"회의록",kind:"④원인 탐색 loop",color:"#b45309",title:"ESD fail 원인 조사 착수 (가설 3종)",
-  text:`제목: N7 GPIO-A ESD fail 원인 조사 착수
+ {fmt:"속보",kind:"③fail 발생",color:"#cf222e",title:"Falcon SerDes-PHY 고객 ORT CDM fail 3건",
+  text:`[속보] Falcon N5P SerDes-PHY, 고객 ORT 전 CDM 500V에서 fail 3건 발생. 오늘 오전 확인. 스펙 미달로 정식 불량 처리 필요. 다음 주 고객A tape-out이라 급함.`},
+ {fmt:"회의록",kind:"④원인 탐색 loop",color:"#b45309",title:"CDM fail 원인 조사 착수 (가설 3종)",
+  text:`제목: Falcon SerDes-PHY CDM fail 원인 조사 착수
 채널: 2026-07-14 긴급 QA회의
 
-- GPIO-A HBM fail(로트 A123) 원인 조사 시작.
-- 가설: (1) clamp 소자 배치 문제 (2) 공정 리비전 드리프트 (3) rule deck 버전 불일치.
+- Falcon SerDes-PHY CDM fail 원인 조사 시작.
+- 가설: (1) IO ring clamp 소자 배치 문제 (2) 공정 리비전 드리프트 (3) rule deck 버전 불일치.
 - 아직 확정된 원인 없음. 가설별 데이터 수집 담당 배정.
 - clamp 레이아웃 재검토, 공정 SPC 확인, released rule 버전 대조 예정.`},
- {fmt:"메일",kind:"⑤원인발견·해결시도",color:"#6941c6",title:"근본원인 확인 → IP 2.2 수정 착수",
-  text:`제목: [원인분석] GPIO-A ESD fail 근본원인 확인
+ {fmt:"메일",kind:"⑤원인발견·해결시도",color:"#6941c6",title:"근본원인 확인 → IP clamp 수정 착수",
+  text:`제목: [원인분석] Falcon CDM fail 근본원인 확인
 보낸사람: ESD QA
 
 조사 결과 근본원인을 확인했습니다.
-clamp 소자 spacing이 rule deck v1.2의 신규 clamp spacing 규칙을 위반, 실리콘에서 spacing 부족으로 ESD 경로 저항이 증가해 fail로 이어졌습니다.
-IP 2.1이 v0.9 기준으로 released되어 v1.2 규칙이 미반영된 상태였습니다.
-현재 IP 2.2에서 clamp spacing 수정 작업을 진행 중입니다.`},
+IO ring clamp 소자 spacing이 rule deck v3.2의 신규 clamp spacing 규칙을 위반, 실리콘에서 spacing 부족으로 ESD 경로 저항이 증가해 CDM fail로 이어졌습니다.
+SerDes-PHY IP가 v3.1 기준으로 released되어 v3.2 규칙이 미반영된 상태였습니다.
+현재 IP 리비전에서 clamp spacing 수정 작업을 진행 중입니다.`},
  {fmt:"회의록",kind:"⑥해결·재발방지",color:"#0891b2",title:"해결책 검증 + 재발방지 대책 수립",
-  text:`제목: GPIO-A ESD 해결책 및 재발방지 대책
+  text:`제목: Falcon CDM 해결책 및 재발방지 대책
 채널: 2026-07-20 QA 대책회의
 
-- 해결책: IP 2.2에서 clamp spacing 수정 완료, HBM 2.6kV로 재검증 통과. 알파·베타과제 공통 적용.
+- 해결책: IP 리비전에서 clamp spacing 수정 완료, CDM 750V로 재검증 통과. Falcon 적용.
 - 재발방지: released IP 목록에 '검증 rule deck 버전' 필드 필수화, 사인오프 게이트에서 IP-rule 버전 자동 대조 도입.
 - 프로세스 반영 데드라인: 2026-08-15.`},
- {fmt:"메일",kind:"⑦종결",color:"#1a7f37",title:"GPIO-A ESD fail 이슈 클로즈",
-  text:`제목: [종결] N7 GPIO-A ESD fail 이슈 클로즈
-보낸사람: 알파과제 PL
+ {fmt:"메일",kind:"⑦종결",color:"#1a7f37",title:"Falcon CDM fail 이슈 클로즈",
+  text:`제목: [종결] Falcon N5P SerDes-PHY CDM fail 이슈 클로즈
+보낸사람: Falcon PL
 
-GPIO-A ESD HBM fail 이슈는 IP 2.2 적용 및 재검증 통과로 종결합니다.
+Falcon SerDes-PHY CDM fail 이슈는 IP clamp 수정 및 재검증 통과로 종결합니다.
 재발방지 대책(버전 자동 대조)도 프로세스에 반영 완료했습니다.
-사인오프 정상 진행. 관련자분들 수고하셨습니다.`},
+고객A tape-out 정상 진행. 관련자분들 수고하셨습니다.`},
 ];
 function sampleCardHtml(s,grp,i){
   return `<div class="sample-card" data-grp="${grp}" data-i="${i}"><div class="sc-h"><span class="fmt">${esc(s.fmt)}</span>`+
@@ -1891,45 +1886,42 @@ const MST_SAMPLE={
 
 ■ node (상위 노드) — 괄호 안은 별칭
   N7  (7nm, CLN7FF)
-  N6  (6nm, CLN6FF)
   N5  (5nm, CLN5FF)
   N3  (3nm, CLN3)
 
-■ process (실제 공정 변이 / 소속 node) — 따옴표는 별칭
+■ process (공정 변이 / 소속 node) — 따옴표는 별칭
   N7P  (node N7) : N7 Performance, "N7 프라임"
-  N7+  (node N7) : EUV 버전, "7나노 플러스"
   N5P  (node N5) : N5 Performance
-  N4P  (node N5) : "N4 Performance", N5 파생
-  N3E  (node N3) : N3 Enhanced
+  N3E  (node N3, 부가 node N5) : N3 Enhanced   ← N3 기반이지만 N5 라인에서도 씀
 
 ■ product (고객 IP 블록)
-  GPIO-A, SerDes-PHY(=SERDES PHY), USB3-PHY, PLL-C
+  GPIO-A, SerDes-PHY(=SERDES PHY), PLL-C
 
 ■ project (고객 프로젝트)
-  Falcon (고객A 모바일 AP), Titan (고객B 네트워크 SoC), 알파과제`,
+  Falcon (고객A 모바일 AP), Titan (고객B 네트워크 SoC)`,
   guide:`우리 ESD 팀 마스터 정리입니다.
-node의 id는 N7/N6/N5/N3 형식으로 쓰세요(7nm·6nm 등은 그 node의 별칭). "N계열/N나노"를 node id로 만들지 마세요.
-베이스 공정은 별도 process로 만들지 말고 node로 둡니다. process는 변이(N7P·N7+·N5P·N4P·N3E)만, 각자 소속 node를 명시.
+node의 id는 N7/N5/N3 형식으로 쓰세요(7nm·5nm 등은 그 node의 별칭). "N계열/N나노"를 node id로 만들지 마세요.
+베이스 공정은 별도 process로 만들지 말고 node로 둡니다. process는 변이(N7P·N5P·N3E)만, 각자 소속 node를 명시.
+N3E는 N3가 주(primary) node지만 N5 라인에도 걸쳐 있으니 N5도 부가 소속으로 넣어주세요(한 공정이 여러 node에 소속 가능).
 괄호·따옴표·"=" 뒤 표기는 같은 것의 다른 이름(별칭)입니다.`
 };
 const ISS_SAMPLE={
   text:`보낸사람: 김상현 (ESD팀)
-제목: RE: RE: [Falcon] N5P SerDes-PHY CDM fail 급건
+제목: [Falcon] N5P SerDes-PHY CDM fail + rule deck 버전 건
 
 N5P Falcon SerDes-PHY, 고객 ORT 전 CDM 500V에서 fail 3건 확인됐습니다.
-ESD 클램프 마진이 rule deck v3.2 기준으로 부족해 보입니다. 다음 주 고객(고객A) tape-out이라 급합니다.
-Jira 티켓 올렸습니다: https://jira.example.com/browse/FAL-2231
+ESD 클램프 마진이 부족해 보입니다. 다음 주 고객A tape-out이라 급합니다. 현재 원인탐색 단계.
+Jira: https://jira.example.com/browse/FAL-2231
 
-> 보낸사람: 박정우 (PA)
-> HBM 2kV는 통과인데 CDM만 fail이네요. IO ring 클램프 재검토가 필요합니다.
+> 박정우 (PA): HBM 2kV는 통과인데 CDM만 fail이네요. IO ring 클램프 재검토 필요.
 > 정리 문서: https://conf.example.com/wiki/spaces/ESD/pages/887/Falcon-CDM-margin
-> > 보낸사람: 이수민 (고객접점)
-> > 그리고 별개로, N5P rule deck 버전이 팀마다 v3.1 / v3.2 섞여 있어 사인오프 기준이 안 맞습니다.
-> > 이건 프로세스 이슈라 따로 잡아야 할 것 같습니다. EDM: https://edm.example.com/doc/RD-5591
-> > 고객접점 이수민 드림`,
-  guide:`Falcon 프로젝트(고객A)의 N5P SerDes-PHY ESD 건입니다.
-CDM/HBM은 ESD 시험 항목이고, rule deck는 ESD 설계규칙(DRC) 버전입니다.
-심각한 fail 건과 rule deck 버전 불일치(프로세스) 건은 별도 이슈로 봐주세요.`
+
+그리고 별개로, N5P rule deck 버전이 팀마다 v3.1 / v3.2 섞여 있어 사인오프 기준이 안 맞습니다.
+이건 프로세스 이슈라 따로 잡아야 합니다. EDM: https://edm.example.com/doc/RD-5591`,
+  guide:`위 원문에서 이슈 2건을 등록해줘.
+1) Falcon(고객A) N5P SerDes-PHY CDM fail 마진 부족 — 좌표 node N5·process N5P·product SerDes-PHY·project Falcon, 상태 원인탐색, 심각도 S2.
+2) N5P rule deck 버전 사인오프 불일치(프로세스 이슈) — 좌표 node N5·process N5P, 상태 정의, 심각도 S3.
+CDM/HBM은 ESD 시험 항목, rule deck는 ESD 설계규칙(DRC) 버전입니다.`
 };
 
 // ── 이슈 자연어 CRUD (원문+가이드 → LLM → 계획 → 적용). 마스터 CRUD와 같은 AX. ──
