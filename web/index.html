@@ -713,6 +713,7 @@
       </div>
       <div class="seed-ctl">
         <button class="btn primary" id="btnMstPlan">계획 생성</button>
+        <button class="btn" id="btnMstSample">📋 샘플 채우기</button>
         <span class="dim" id="mstSeedMsg">LLM 해석 → 현재 마스터와 대조 → create/update/skip/delete 계획. 적용은 선택 후.</span>
       </div>
       <div id="mstPlanPanel"></div>
@@ -1800,6 +1801,54 @@ async function createIssue(){
     else alert("등록 실패: "+e.message);
   }
 }
+// ── 데모 샘플 (TSMC 공정 계열 + 고객사 ESD 이슈 컨셉 — 정의상 예시 데이터) ──
+// 기준정보 샘플과 이슈 샘플이 좌표(N5·N5P·SerDes-PHY·Falcon)로 이어지도록 일관 구성.
+const MST_SAMPLE={
+  text:`[ESD 사인오프용 공정·제품·과제 마스터]
+
+■ node (상위 노드) — 괄호 안은 별칭
+  N7  (7nm, CLN7FF)
+  N6  (6nm, CLN6FF)
+  N5  (5nm, CLN5FF)
+  N3  (3nm, CLN3)
+
+■ process (실제 공정 변이 / 소속 node) — 따옴표는 별칭
+  N7P  (node N7) : N7 Performance, "N7 프라임"
+  N7+  (node N7) : EUV 버전, "7나노 플러스"
+  N5P  (node N5) : N5 Performance
+  N4P  (node N5) : "N4 Performance", N5 파생
+  N3E  (node N3) : N3 Enhanced
+
+■ product (고객 IP 블록)
+  GPIO-A, SerDes-PHY(=SERDES PHY), USB3-PHY, PLL-C
+
+■ project (고객 프로젝트)
+  Falcon (고객A 모바일 AP), Titan (고객B 네트워크 SoC), 알파과제`,
+  guide:`우리 ESD 팀 마스터 정리입니다.
+node의 id는 N7/N6/N5/N3 형식으로 쓰세요(7nm·6nm 등은 그 node의 별칭). "N계열/N나노"를 node id로 만들지 마세요.
+베이스 공정은 별도 process로 만들지 말고 node로 둡니다. process는 변이(N7P·N7+·N5P·N4P·N3E)만, 각자 소속 node를 명시.
+괄호·따옴표·"=" 뒤 표기는 같은 것의 다른 이름(별칭)입니다.`
+};
+const ISS_SAMPLE={
+  text:`보낸사람: 김상현 (ESD팀)
+제목: RE: RE: [Falcon] N5P SerDes-PHY CDM fail 급건
+
+N5P Falcon SerDes-PHY, 고객 ORT 전 CDM 500V에서 fail 3건 확인됐습니다.
+ESD 클램프 마진이 rule deck v3.2 기준으로 부족해 보입니다. 다음 주 고객(고객A) tape-out이라 급합니다.
+Jira 티켓 올렸습니다: https://jira.example.com/browse/FAL-2231
+
+> 보낸사람: 박정우 (PA)
+> HBM 2kV는 통과인데 CDM만 fail이네요. IO ring 클램프 재검토가 필요합니다.
+> 정리 문서: https://conf.example.com/wiki/spaces/ESD/pages/887/Falcon-CDM-margin
+> > 보낸사람: 이수민 (고객접점)
+> > 그리고 별개로, N5P rule deck 버전이 팀마다 v3.1 / v3.2 섞여 있어 사인오프 기준이 안 맞습니다.
+> > 이건 프로세스 이슈라 따로 잡아야 할 것 같습니다. EDM: https://edm.example.com/doc/RD-5591
+> > 고객접점 이수민 드림`,
+  guide:`Falcon 프로젝트(고객A)의 N5P SerDes-PHY ESD 건입니다.
+CDM/HBM은 ESD 시험 항목이고, rule deck는 ESD 설계규칙(DRC) 버전입니다.
+심각한 fail 건과 rule deck 버전 불일치(프로세스) 건은 별도 이슈로 봐주세요.`
+};
+
 // ── 이슈 자연어 CRUD (원문+가이드 → LLM → 계획 → 적용). 마스터 CRUD와 같은 AX. ──
 async function openIssueNL(){
   const p=$("#issueCrudPanel");
@@ -1813,6 +1862,7 @@ async function openIssueNL(){
     <div class="guide-in" style="margin-top:5px"><div class="guide-h">가이드 <span class="dim">선택 — 해석 힌트</span></div>
       <textarea id="issNLGuide" placeholder="예: 아래는 전부 N7P 알파과제 건입니다"></textarea></div>
     <div class="seed-ctl"><button class="btn primary" id="btnIssPlan">계획 생성</button>
+      <button class="btn" id="btnIssSample">📋 샘플 채우기</button>
       <span class="dim">LLM 해석 → 현재 이슈와 대조 → create/update/skip/delete 계획.</span></div>
     <div id="issPlanPanel"></div></div>`;
 }
@@ -2493,8 +2543,10 @@ document.addEventListener("click",e=>{
   if(e.target.id==="btnIssueCancel"){state.issueFormOpen=false;$("#issueFormPanel").innerHTML="";return;}
   if(e.target.id==="btnIssPlan"){issuePlan();return;}
   if(e.target.id==="btnIssApply"){issueApply();return;}
+  if(e.target.id==="btnIssSample"){$("#issNLText").value=ISS_SAMPLE.text;$("#issNLGuide").value=ISS_SAMPLE.guide;toast("이슈 샘플을 채웠습니다 — 계획 생성을 눌러보세요");return;}
   // ── 기준정보 탭 ──
   if(e.target.id==="btnMstSeed"){const p=$("#mstSeedPanel");p.hidden=!p.hidden;return;}
+  if(e.target.id==="btnMstSample"){$("#mstSeedText").value=MST_SAMPLE.text;$("#mstGuide").value=MST_SAMPLE.guide;toast("기준정보 샘플을 채웠습니다 — 계획 생성을 눌러보세요");return;}
   if(e.target.id==="btnMstPlan"){mstPlan();return;}
   if(e.target.id==="btnMstApply"){mstApply();return;}
   const mnew=e.target.closest("[data-mstnew]");
