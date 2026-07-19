@@ -600,6 +600,8 @@
   .rb-body{flex:1;min-width:0;padding:6px 8px}
   .rb-run{font-size:11px;color:var(--muted);padding:4px 0}
   .rb-run .rb-timer{color:var(--warn);font-weight:700;font-variant-numeric:tabular-nums}
+  .rb-stop{border-color:var(--bad)!important;color:var(--bad)!important;margin-left:4px}
+  .rb-stop:hover{background:var(--bad)!important;color:#fff!important}
   .rb-err{font-size:11px;color:var(--bad);padding:4px 0;word-break:break-word}
   .rb-meta{font-size:10px;color:var(--muted);margin-bottom:4px}
   .rb-commit{flex:none;border-left:1px solid var(--border);display:flex;align-items:flex-start;padding:6px}
@@ -978,9 +980,9 @@ async function runSearch(q){
 
 /* ---------- 입력·실행 (CAPTURE→EXTRACT→REVIEW→COMMIT) ---------- */
 const ETYPES=["case","issue","finding","initiative","action","pattern","context"];
-async function apiPost(body){
+async function apiPost(body,signal){
   const r=await fetch("api/workflow/step",{method:"POST",
-    headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal});
   const j=await r.json().catch(()=>({error:"HTTP "+r.status}));
   if(!r.ok)throw Object.assign(new Error(j.error||("HTTP "+r.status)),{code:j.code});
   return j;
@@ -1160,10 +1162,11 @@ async function submitText(text,guide,firstCapturedAt){
 // 미등록 후보·충돌이 있으면 여기서 멈춘다 — 좌표가 틀린 채로 분류·매핑하면 전부 오염되므로.
 // 사람이 기준정보를 등록(또는 '이번엔 무시')하면 EXTRACT로 넘어간다(데드락 방지).
 async function preflight(run){
+  run._cancelled=false; run._abort=new AbortController(); const sig=run._abort.signal;
   try{
-    const st=(await apiPost({step:"STRUCTURE",input:{source_id:run.sourceId}})).result;
+    const st=(await apiPost({step:"STRUCTURE",input:{source_id:run.sourceId}},sig)).result;
     run.pre={stats:st.stats};run.phase="master";updateRunBox(run);saveRuns();
-    const mr=(await apiPost({step:"MASTER_RESOLVE",input:{source_id:run.sourceId}})).result;
+    const mr=(await apiPost({step:"MASTER_RESOLVE",input:{source_id:run.sourceId}},sig)).result;
     run.pre.master=mr;
     if(mr.needs_review){
       try{await loadMaster();}catch(e){}   // 게이트 quick-register의 상위 node 목록용
@@ -1171,21 +1174,33 @@ async function preflight(run){
       setRunMsg(run.runId+" — 기준정보 선행 필요 (게이트에서 바로 등록 가능)");return;
     }
     await startEvents(run);
-  }catch(e){run.status="error";run.error=(e.code?e.code+" ":"")+e.message;updateRunBox(run);saveRuns();}
+  }catch(e){if(run._cancelled)return;   // 사용자 정지 → stopRun이 상태 처리, 에러로 덮지 않음
+    run.status="error";run.error=(e.code?e.code+" ":"")+e.message;updateRunBox(run);saveRuns();}
 }
 // 새 흐름: 확정 좌표 하에서 사건 추출 → 사람 이슈에 매핑 제안 → 게이트2(검토) → EVENT_COMMIT.
 // (LLM이 이슈를 발명하던 옛 EXTRACT를 대체. 이슈·좌표는 사람이 만들고, 기계는 사건만 붙인다.)
 async function startEvents(run){
+  run._cancelled=false; run._abort=new AbortController(); const sig=run._abort.signal;
   run.status="running";run.phase="event";run._t0=Date.now();updateRunBox(run);saveRuns();
   try{
-    const ev=(await apiPost({step:"EVENT_EXTRACT",input:{source_id:run.sourceId}})).result;
+    const ev=(await apiPost({step:"EVENT_EXTRACT",input:{source_id:run.sourceId}},sig)).result;
     run.events=ev.events||[];run.phase="map";updateRunBox(run);saveRuns();
     let mp={links:[],unmapped:[],issue_proposals:[],candidates:[]};
-    if(run.events.length)mp=(await apiPost({step:"ISSUE_MAP",input:{events:run.events}})).result;
+    if(run.events.length)mp=(await apiPost({step:"ISSUE_MAP",input:{events:run.events}},sig)).result;
     run.mapping=mp;run.evReviews={};run.status="review";run.phase="review";
     updateRunBox(run);saveRuns();
     setRunMsg(run.runId+" — 사건 "+run.events.length+"건 추출 · 검토 후 확정");
-  }catch(e){run.status="error";run.error=(e.code?e.code+" ":"")+e.message;updateRunBox(run);saveRuns();}
+  }catch(e){if(run._cancelled)return;   // 사용자 정지
+    run.status="error";run.error=(e.code?e.code+" ":"")+e.message;updateRunBox(run);saveRuns();}
+}
+// 추출 정지 — 진행 중 fetch를 취소하고 취소 상태로. (서버측 LLM 호출은 백그라운드로 끝날 수 있으나
+// 클라가 다음 단계로 안 넘어가므로 결과는 반영 안 됨.) 재검토로 언제든 다시 시작.
+function stopRun(runId){
+  const run=findRun(runId); if(!run)return;
+  run._cancelled=true;
+  if(run._abort){try{run._abort.abort();}catch(e){}}
+  run.status="cancelled"; run.phase=null;
+  updateRunBox(run); saveRuns(); setRunMsg(runId+" — 추출을 정지했습니다");
 }
 async function commitEvents(run){
   if(!run||run.committed)return;
@@ -1582,11 +1597,13 @@ function runBoxHtml(run){
   const badge=st==="gate"?'<span class="rb-status gate">기준정보 검토</span>'
     :st==="running"?'<span class="rb-status running">처리중</span>'
     :st==="error"?'<span class="rb-status error">실패</span>'
+    :st==="cancelled"?'<span class="rb-status gate">정지됨</span>'
     :run.committed?'<span class="rb-status committed">확정됨</span>'
     :'<span class="rb-status done">검토대기</span>';
   let body,commit="";
   if(st==="gate"){body=runActionsHtml(run,true)+runPreHtml(run)+runGateHtml(run);}
-  else if(st==="running"){body=runActionsHtml(run,false)+runPreHtml(run)+`<div class="rb-run">${run.flow==="event"?"사건 추출·이슈 매핑 중…":"추출 중…"} <span class="rb-timer" data-timer>0초</span> <span style="color:var(--muted)">(모델 판단 대기)</span></div>`;}
+  else if(st==="running"){body=runActionsHtml(run,false)+runPreHtml(run)+`<div class="rb-run">${run.flow==="event"?"사건 추출·이슈 매핑 중…":"추출 중…"} <span class="rb-timer" data-timer>0초</span> <span style="color:var(--muted)">(모델 판단 대기)</span> <button class="btn mini rb-stop" data-runstop="${escAttr(run.runId)}">⏹ 정지</button></div>`;}
+  else if(st==="cancelled"){body=runActionsHtml(run,true)+`<div class="rb-run">추출을 정지했습니다. <span class="dim">🔄 재검토로 다시 시작할 수 있습니다.</span></div>`;}
   else if(st==="error"){body=runActionsHtml(run,true)+`<div class="rb-err">${esc(run.error||'추출 실패')}</div>`+
     `<div class="rb-actions"><button class="rb-retry" data-retry="${escAttr(run.runId)}">↻ 재시도</button></div>`;}
   else if(run.committed){   // 확정 후
@@ -3036,6 +3053,8 @@ document.addEventListener("click",e=>{
   if(rsrc){showRunSource(rsrc.dataset.runsrc);return;}
   const rredo=e.target.closest("[data-runredo]");
   if(rredo){runRedo(rredo.dataset.runredo);return;}
+  const rstop=e.target.closest("[data-runstop]");
+  if(rstop){stopRun(rstop.dataset.runstop);return;}
   const recap=e.target.closest("[data-recap]");
   if(recap){toggleRecap(recap.dataset.recap);return;}
   // ── 자연어 CRUD 항목별 검토/커밋/원문/복기 ──
