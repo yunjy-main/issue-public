@@ -1,0 +1,2 @@
+web/vendor/** -text
+*.min.js -text
