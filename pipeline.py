@@ -857,7 +857,11 @@ def handle_step(body):
             for c in master_mod.find_unknown_candidates(body, cur):
                 if not any(x["surface"].lower() == c["surface"].lower() for x in cands):
                     cands.append({"surface": c["surface"], "doc_id": d.get("doc_id")})
-        blocked = any(x["conflicts"] or x["guide_conflicts"] for x in out) or bool(cands)
+        # 게이트는 **미등록 좌표 후보**(등록 필요) + **가이드 충돌**만 막는다.
+        # 한 문서에 등록된 좌표가 여럿(예: 메신저 스레드에 N5P·N7P·Falcon·Titan 혼재)인
+        # '충돌'은 막지 않는다 — 사건 추출(EVENT_EXTRACT)이 원문+좌표를 LLM에 줘 사건별로
+        # 좌표를 붙이므로 혼합 문서를 그대로 처리한다. (문서 단위 단일 좌표 강제 → 오탐 게이트였음)
+        blocked = any(x["guide_conflicts"] for x in out) or bool(cands)
         return ok({"docs": out, "unknown_candidates": cands, "needs_review": blocked},
                   ["MASTER_UPSERT", "MASTER_SEED_PLAN", "EXTRACT", "STOP"])
 
