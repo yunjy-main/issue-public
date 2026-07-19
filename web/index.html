@@ -364,6 +364,18 @@
   .mst-ntag.mst-warn{border-color:var(--warn);color:var(--warn)}
   .mst-proc0{padding-left:6px}
   .mst-xnodes{display:flex;flex-wrap:wrap;gap:3px 10px}
+  /* 그래프 뷰(Cytoscape) */
+  .gr-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+  .gr-filters{display:inline-flex;gap:9px;flex-wrap:wrap;margin-left:auto}
+  .gr-fchip{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--muted);cursor:pointer;user-select:none}
+  .gr-fchip input{margin:0;width:auto}
+  .gr-dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .gr-wrap{display:flex;gap:8px;height:calc(100vh - 155px);min-height:400px}
+  #cyGraph{flex:1;min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--panel);overflow:hidden}
+  .gr-info{flex:0 0 220px;border:1px solid var(--border);border-radius:8px;background:var(--chip);padding:8px;font-size:11.5px;overflow:auto}
+  .gr-info-h{margin-bottom:4px;display:flex;gap:5px;align-items:center}
+  .gr-info-t{font-weight:600;margin:3px 0;word-break:break-word}
+  @media(max-width:640px){.gr-wrap{flex-direction:column;height:auto}#cyGraph{height:60vh}.gr-info{flex:none}}
   .mst-xn{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--fg);font-family:var(--mono)}
   .mst-xn input{width:auto;margin:0}
   .mst-form{border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--chip)}
@@ -649,6 +661,7 @@
   <a href="#docs" data-tab="docs">문서</a>
   <a href="#mst" data-tab="mst">기준정보</a>
   <a href="#know" data-tab="know">이슈</a>
+  <a href="#graph" data-tab="graph">그래프</a>
 </nav>
 <div class="toolbar" id="docToolbar">
   <span class="back-link" id="btnBack" hidden>‹ 목록</span>
@@ -750,8 +763,19 @@
       <div class="mst-form" id="mstForm"></div>
     </div>
   </section>
+  <section class="screen" id="scrGraph" hidden>
+    <div class="gr-bar">
+      <b>그래프</b>
+      <span class="dim">기준정보(node→process, M:N)·이슈–사건 관계를 인터랙티브로. 클릭=상세, 드래그·휠=이동/확대.</span>
+      <span class="gr-filters" id="grFilters"></span>
+      <button class="btn mini" id="btnGraphReload">↻ 새로고침</button>
+      <button class="btn mini" id="btnGraphFit">⊡ 맞춤</button>
+    </div>
+    <div class="gr-wrap"><div id="cyGraph"></div><div class="gr-info" id="grInfo"></div></div>
+  </section>
   <footer>run #0 — 이 시스템은 자기 자신의 방법론으로 만들어진다 (M2 원칙 0)</footer>
 </main>
+<script src="vendor/cytoscape.min.js"></script>
 <script>
 "use strict";
 const $=s=>document.querySelector(s);
@@ -2820,7 +2844,68 @@ async function applyDedup(){
 }
 
 /* ---------- routing & events ---------- */
-const TABS=["run","eng","docs","mst","know"];   // 입력(첫 화면) · 프롬프트 · 문서 · 기준정보 · 이슈(끝 화면)
+const TABS=["run","eng","docs","mst","know","graph"];   // 입력·프롬프트·문서·기준정보·이슈·그래프
+// ── 그래프 뷰 (Cytoscape.js, 벤더링·오프라인) — 기준정보 + 이슈·사건 엔티티/관계 ──
+let _cy=null;
+const GRAPH_KINDS={
+  node:{c:"#2563eb",ko:"node"}, process:{c:"#0891b2",ko:"process"},
+  product:{c:"#7c3aed",ko:"product"}, project:{c:"#b45309",ko:"project"},
+  issue:{c:"#cf222e",ko:"issue"}, event:{c:"#1a7f37",ko:"event/사건"}
+};
+function grHide(){state.grHide=state.grHide||{};return state.grHide;}
+function grFiltersHtml(){
+  const h=grHide();
+  return Object.keys(GRAPH_KINDS).map(k=>`<label class="gr-fchip"><input type="checkbox" data-grk="${k}" ${h[k]?'':'checked'}><span class="gr-dot" style="background:${GRAPH_KINDS[k].c}"></span>${GRAPH_KINDS[k].ko}</label>`).join("");
+}
+async function renderGraph(){
+  const cont=$("#cyGraph"); if(!cont)return;
+  if(typeof cytoscape==="undefined"){cont.innerHTML='<div class="ent-empty" style="padding:20px">그래프 라이브러리 로드 실패 — vendor/cytoscape.min.js 확인</div>';return;}
+  $("#grFilters").innerHTML=grFiltersHtml();
+  let mg={entities:[],relations:[]}, ents=[], rels=[];
+  try{mg=(await api("api/master")).master||mg;}catch(e){}
+  try{ents=(await api("api/entities")).entities||[];}catch(e){}
+  try{rels=(await api("api/relations")).relations||[];}catch(e){}
+  const hide=grHide(), nodes=[], edges=[], seen={};
+  const addNode=(id,kind,label,sub)=>{if(!id||seen[id]||hide[kind])return;seen[id]=1;
+    nodes.push({data:{id:String(id),kind,label:String(label||id).slice(0,26),full:String(label||id),sub:sub||""}});};
+  (mg.entities||[]).forEach(e=>addNode(e.id,e.kind,e.id,(e.aliases||[]).join(", ")));
+  (ents||[]).filter(e=>(e.state||"active")==="active"&&(e.type==="issue"||e.type==="event"))
+    .forEach(e=>addNode(e.id,e.type,e.title||e.what||e.id));
+  const rowify=r=>({from:r.from,to:r.to,type:r.rtype||r.type||r.rel,primary:r.primary,state:r.state});
+  (mg.relations||[]).map(rowify).concat((rels||[]).map(rowify)).forEach((r,i)=>{
+    if((r.state||"active")!=="active"||!seen[r.from]||!seen[r.to])return;
+    edges.push({data:{id:"ed"+i,source:String(r.from),target:String(r.to),rel:r.type||"",primary:!!r.primary}});
+  });
+  // 테마 색을 실측(캔버스라 CSS 변수 못 읽음)
+  const cs=getComputedStyle(document.body), pick=(v,fb)=>((cs.getPropertyValue(v)||"").trim()||fb);
+  const FG=pick("--fg","#1a1f26"), MUT=pick("--muted","#8a94a6"), ACC=pick("--accent","#2563eb");
+  const kindSel=Object.keys(GRAPH_KINDS).map(k=>({selector:`node[kind="${k}"]`,style:{"background-color":GRAPH_KINDS[k].c}}));
+  if(_cy){_cy.destroy();_cy=null;}
+  if(!nodes.length){cont.innerHTML='<div class="ent-empty" style="padding:20px">표시할 데이터가 없습니다 — 기준정보·이슈를 먼저 등록하세요.</div>';
+    $("#grInfo").innerHTML="";return;}
+  cont.innerHTML="";
+  _cy=cytoscape({container:cont, elements:{nodes,edges}, wheelSensitivity:0.25,
+    style:[
+      {selector:"node",style:{"label":"data(label)","color":FG,"font-size":"9px","text-valign":"bottom","text-margin-y":3,
+        "width":18,"height":18,"text-wrap":"wrap","text-max-width":"96px","border-width":0}},
+      ...kindSel,
+      {selector:'node[kind="node"]',style:{"width":28,"height":28,"font-weight":"bold","font-size":"11px"}},
+      {selector:'node[kind="issue"]',style:{"shape":"round-rectangle","width":26,"height":17}},
+      {selector:'node[kind="event"]',style:{"shape":"diamond"}},
+      {selector:"edge",style:{"width":1.2,"line-color":MUT,"target-arrow-color":MUT,"target-arrow-shape":"triangle",
+        "curve-style":"bezier","arrow-scale":0.7,"label":"data(rel)","font-size":"7px","color":MUT,"text-rotation":"autorotate","text-opacity":0.75}},
+      {selector:"edge[?primary]",style:{"line-color":ACC,"target-arrow-color":ACC,"width":2}},
+      {selector:"node:selected",style:{"border-width":3,"border-color":ACC}}
+    ],
+    layout:{name:"cose",animate:false,padding:24,nodeRepulsion:7000,idealEdgeLength:70,nodeOverlap:12}
+  });
+  _cy.on("tap","node",evt=>{const d=evt.target.data();
+    $("#grInfo").innerHTML=`<div class="gr-info-h"><span class="ty-badge">${esc(d.kind)}</span> <b>${esc(d.id)}</b></div>
+      <div class="gr-info-t">${esc(d.full||"")}</div>${d.sub?`<div class="dim">별칭: ${esc(d.sub)}</div>`:''}
+      ${/^(ISSUE|EVENT)-/.test(d.id)?`<a class="btn mini" href="#e/${escAttr(d.id)}">상세 열기 →</a>`:''}`;});
+  _cy.on("tap",evt=>{if(evt.target===_cy)$("#grInfo").innerHTML='<span class="dim">노드를 클릭하면 정보가 표시됩니다.</span>';});
+  $("#grInfo").innerHTML=`<span class="dim">노드 <b>${nodes.length}</b> · 관계 <b>${edges.length}</b>. 노드 클릭=정보, 드래그·휠=이동/확대.</span>`;
+}
 function setTab(tab){
   if(!TABS.includes(tab))tab="run";
   state.tab=tab;
@@ -2830,6 +2915,7 @@ function setTab(tab){
   $("#scrEng").hidden=tab!=="eng";
   $("#scrMst").hidden=tab!=="mst";
   $("#scrKnow").hidden=tab!=="know";
+  $("#scrGraph").hidden=tab!=="graph";
   $("#scrEnt").hidden=true;   // 상세는 openEntity에서만 표시
   if(tab!=="docs"){$("#scrList").hidden=true;$("#scrDoc").hidden=true;$("#scrSearch").hidden=true;$("#btnBack").hidden=true;}
   if(tab==="run")renderHistory();
@@ -2838,6 +2924,7 @@ function setTab(tab){
     $("#mstTree").innerHTML='<div class="plan-err">기준정보 로드 실패: '+esc(e.message)+'</div>';});
   if(tab==="know"){loadIssues();
     if(state.issNL&&state.issNL.open&&!state.issueCrudOpen)openIssueNL(true);}   // 계획 보존 복원
+  if(tab==="graph")renderGraph();
 }
 function route(){
   const h=location.hash;
@@ -2849,6 +2936,7 @@ function route(){
   if(h==="#docs"){setTab("docs");show("list");return;}
   if(h==="#mst"){setTab("mst");return;}
   if(h==="#know"){setTab("know");return;}
+  if(h==="#graph"){setTab("graph");return;}
   setTab("run");   // 기본 = 입력 (첫 화면엔 항상 텍스트박스+전송)
 }
 $("#homeLink").addEventListener("click",e=>{e.preventDefault();
@@ -2862,6 +2950,8 @@ $("#q").addEventListener("input",e=>{
   clearTimeout(qTimer);qTimer=setTimeout(()=>runSearch(e.target.value.trim()),200);
 });
 $("#btnExtract").addEventListener("click",doSubmit);
+$("#btnGraphReload").addEventListener("click",renderGraph);
+$("#btnGraphFit").addEventListener("click",()=>{if(_cy)_cy.fit(undefined,30);});
 $("#btnReconcile").addEventListener("click",doReconcile);
 $("#btnDedup").addEventListener("click",doDedup);
 $("#btnRebuild").addEventListener("click",doRebuild);
@@ -3047,6 +3137,9 @@ document.addEventListener("change",e=>{
     run.evEdits[t][eved.dataset.eved]=eved.value;saveRuns();
     if(eved.dataset.eved==="kind"){const row=eved.closest(".ev-row");const b=row&&row.querySelector(".ev-kind");
       if(b){b.textContent=eved.value;b.className="ev-kind "+(EV_KIND_CLS[eved.value]||"");}}}}
+  // 그래프 kind 필터 토글 → 재렌더
+  const grk=e.target.closest("[data-grk]");
+  if(grk){grHide()[grk.dataset.grk]=!grk.checked;renderGraph();return;}
   // 자연어 CRUD edit 입력 — 저장만(재렌더 안 함, 포커스 유지)
   const ced=e.target.closest("[data-cruded]");
   if(ced){const kind=ced.dataset.crudkind,i=+ced.dataset.crudix;

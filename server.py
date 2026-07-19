@@ -120,6 +120,18 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, "text/html; charset=utf-8", f.read())
             except OSError:
                 self._json({"error": "index.html not found", "code": "E-6001"}, 500)
+        elif path.startswith("/vendor/"):
+            # 벤더링한 정적 자산(cytoscape 등) — 오프라인 자체호스팅, 경로 traversal 방지
+            name = path[len("/vendor/"):]
+            if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}\.(js|css)", name):
+                self._json({"error": "bad asset", "code": "E-1001"}, 400)
+                return
+            try:
+                with open(os.path.join(WEB_DIR, "vendor", name), "rb") as f:
+                    ct = "application/javascript" if name.endswith(".js") else "text/css"
+                    self._send(200, ct + "; charset=utf-8", f.read())
+            except OSError:
+                self._json({"error": "asset not found", "code": "E-1002"}, 404)
         elif path == "/api/docs":
             docs, skipped = scan_docs()
             self._json({"docs": docs, "skipped": skipped})
