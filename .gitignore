@@ -13,3 +13,4 @@ knowledge/config/vocabulary.yaml
 knowledge/config/llm.json
 *.tmp
 __pycache__/
+knowledge/runstate/

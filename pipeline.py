@@ -328,6 +328,14 @@ def handle_step(body):
     if step == "LLM_CANCEL":   # 정지 버튼 — 진행 중 LLM 호출을 서버측에서 취소(claude-proxy kill)
         return ok({"cancelled": bool(llm.cancel())}, ["STOP"])
 
+    if step == "RUNSTATE_SAVE":   # 입력 run 상태 서버 저장(새로고침·타 브라우저 공유)
+        r = store.save_runstate(inp.get("run_id"), inp.get("data") or {})
+        return ok({"saved": bool(r)}, ["STOP"])
+
+    if step == "RUNSTATE_DELETE":
+        store.delete_runstate(inp.get("run_id"))
+        return ok({"deleted": True}, ["STOP"])
+
     if step == "CAPTURE":
         text = (inp.get("text") or "").strip()
         if not text:

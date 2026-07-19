@@ -148,10 +148,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"meta": meta, "content": body})
         elif path in ("/api/runs", "/api/run", "/api/run_status", "/api/source_text",
                       "/api/entities", "/api/relations", "/api/sources", "/api/stats",
-                      "/api/vocabulary", "/api/master", "/api/job", "/api/engines", "/api/history"):
+                      "/api/vocabulary", "/api/master", "/api/job", "/api/engines", "/api/history",
+                      "/api/runstates"):
             # 저장소 조회 예외를 격리 — 손상 파일 하나가 커넥션을 끊지 않도록 JSON 500
             try:
-                if path == "/api/run_status":
+                if path == "/api/runstates":
+                    self._json({"runs": store.list_runstates()})
+                elif path == "/api/run_status":
                     q = urllib.parse.parse_qs(parsed.query)
                     rid = (q.get("id") or [""])[0]
                     if not re.fullmatch(r"RUN-\d{6,}", rid):

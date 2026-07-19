@@ -21,6 +21,7 @@ DIRS = {
     "master": os.path.join(K, "master"),   # 기준정보(사람이 만드는 좌표축)
     "docs": os.path.join(K, "docs_struct"),   # STRUCTURE 산출물(구조화 문서)
     "jobs": os.path.join(K, "jobs"),   # 범용 비동기 작업(긴 LLM 스텝: 자연어 CRUD 등)
+    "runstate": os.path.join(K, "runstate"),   # 입력 run 상태(추출중·확정대기·경과) — 새로고침·타 브라우저 공유
 }
 KST = timezone(timedelta(hours=9))
 _LOCK = threading.RLock()   # 쓰기/읽기 모두 이 락 하에서 파일 접근 (win32 os.replace 경합 방지)
@@ -508,6 +509,55 @@ def job_error(jid, code, error):
 def job_get(jid):
     with _LOCK:
         return _read_json(os.path.join(DIRS["jobs"], jid + ".json"))
+
+
+# ---------- 입력 run 상태 서버 저장 — 새로고침에도 경과초 유지 + 다른 브라우저에서도 동일 run 표시 ----------
+_RUNID_RE = re.compile(r"RUN-[A-Za-z0-9_-]{1,48}$")
+
+
+def save_runstate(run_id, data):
+    """run 상태(status·phase·events·mapping·evReviews·started_at 등)를 파일로 저장. 클라가 전이마다 호출."""
+    if not (run_id and _RUNID_RE.match(str(run_id))):
+        return None
+    with _LOCK:
+        obj = dict(data or {})
+        obj["run_id"] = run_id
+        obj["updated_at"] = now_iso()
+        _atomic_write(os.path.join(DIRS["runstate"], run_id + ".json"), json.dumps(obj, ensure_ascii=False))
+        return obj
+
+
+def get_runstate(run_id):
+    with _LOCK:
+        if not (run_id and _RUNID_RE.match(str(run_id))):
+            return None
+        return _read_json(os.path.join(DIRS["runstate"], str(run_id) + ".json"))
+
+
+def list_runstates():
+    with _LOCK:
+        out, d = [], DIRS["runstate"]
+        if os.path.isdir(d):
+            for name in sorted(os.listdir(d)):
+                if name.endswith(".json"):
+                    r = _read_json(os.path.join(d, name))
+                    if r:
+                        out.append(r)
+        out.sort(key=lambda r: r.get("updated_at", ""), reverse=True)
+        return out
+
+
+def delete_runstate(run_id):
+    with _LOCK:
+        if not (run_id and _RUNID_RE.match(str(run_id))):
+            return False
+        p = os.path.join(DIRS["runstate"], str(run_id) + ".json")
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except OSError:
+            pass
+        return True
 
 
 # ---------- 비동기 EXTRACT 작업 상태 (job.json) ----------
