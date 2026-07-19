@@ -24,6 +24,26 @@ def load_llm_config():
     return {"mode": "stub", "producer": {"type": "tool", "name": "stub-extractor", "version": "0.1"}}
 
 
+def cancel(cfg=None):
+    """진행 중인 LLM 호출을 서버측에서 취소 시도 — claude-proxy의 /cancel(진행 claude kill).
+    프록시가 아닌 사내 LLM이면 /cancel이 없어 실패하지만 무시(best-effort). 반환 성공여부."""
+    import urllib.request, urllib.parse
+    cfg = cfg or load_llm_config()
+    url = cfg.get("url") or ""
+    if not url:
+        return False
+    parts = urllib.parse.urlsplit(url)   # url 경로를 /cancel로: .../v1/chat/completions → .../cancel
+    cancel_url = urllib.parse.urlunsplit((parts.scheme, parts.netloc, "/cancel", "", ""))
+    try:
+        req = urllib.request.Request(cancel_url, data=b"{}",
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=3) as r:
+            r.read()
+        return True
+    except Exception:
+        return False
+
+
 # ---------- LLM 요청/응답 로깅 (사내 LLM 연동 디버깅) ----------
 # 항상: 요청 요약(URL·바이트·response_format 여부)·응답 요약(status·경과·바이트)·실패 상세(실제 예외·경과·URL).
 # ISSUE_LLM_DEBUG=1        → 요청/응답 '본문 전문'과 헤더까지 출력(토큰은 마스킹).

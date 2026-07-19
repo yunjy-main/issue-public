@@ -1198,9 +1198,10 @@ async function startEvents(run){
 function stopRun(runId){
   const run=findRun(runId); if(!run)return;
   run._cancelled=true;
-  if(run._abort){try{run._abort.abort();}catch(e){}}
+  if(run._abort){try{run._abort.abort();}catch(e){}}   // 클라 fetch 중단
+  apiPost({step:"LLM_CANCEL",input:{}}).catch(()=>{});  // 서버측 LLM 호출도 취소(프록시 claude kill) → 재추출 안 막힘
   run.status="cancelled"; run.phase=null;
-  updateRunBox(run); saveRuns(); setRunMsg(runId+" — 추출을 정지했습니다");
+  updateRunBox(run); saveRuns(); setRunMsg(runId+" — 추출 정지(서버 호출 취소)");
 }
 async function commitEvents(run){
   if(!run||run.committed)return;

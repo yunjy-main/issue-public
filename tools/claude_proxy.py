@@ -28,6 +28,24 @@ def _text(content):
     return str(content or "")
 
 
+# 현재 실행 중인 claude 프로세스 추적 — 선점(새 요청)·취소(/cancel)로 죽일 수 있게.
+_CUR = {"proc": None, "state": None}
+_CUR_LOCK = threading.Lock()
+
+
+def cancel_current():
+    """진행 중인 claude 호출을 취소(kill)한다. 선점·정지 공용. 재추출 대기(락 점유) 해소."""
+    with _CUR_LOCK:
+        proc, st = _CUR["proc"], _CUR["state"]
+    if st is not None:
+        st["cancelled"] = True
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
 def _run_claude(model, system, user, schema):
     if not os.path.exists(CFG["cmd"]):
         raise RuntimeError("claude CLI 없음: %s" % CFG["cmd"])
@@ -41,18 +59,33 @@ def _run_claude(model, system, user, schema):
     # system은 --system-prompt로 넘기지 않고 stdin에 합친다:
     # --system-prompt는 CLI의 StructuredOutput 지시를 대체해 --json-schema를 무력화한다.
     prompt = (system + "\n\n" + user) if system else user
-    # 동시 호출 직렬화(_CLI_LOCK) + 1회 재시도(부하 시 일시 실패 흡수)
+    # 새 요청은 **진행 중인 claude를 선점**해 즉시 락을 얻는다 → 재추출이 좀비 호출 뒤에서 대기하지 않음.
+    cancel_current()
+    st = {"cancelled": False}
     last = "unknown"
     with _CLI_LOCK:
         for attempt in range(2):
-            proc = subprocess.run(argv, input=prompt, capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace",
-                                  timeout=CFG["timeout"], env=env)
+            proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                                    errors="replace", env=env)
+            with _CUR_LOCK:
+                _CUR["proc"], _CUR["state"] = proc, st
+            try:
+                out, err = proc.communicate(input=prompt, timeout=CFG["timeout"])
+            except subprocess.TimeoutExpired:
+                proc.kill(); proc.communicate()
+                raise
+            finally:
+                with _CUR_LOCK:
+                    if _CUR["proc"] is proc:
+                        _CUR["proc"], _CUR["state"] = None, None
+            if st["cancelled"]:            # 선점/취소로 죽음 — 재시도 금지, 취소로 보고
+                raise RuntimeError("cancelled")
             if proc.returncode != 0:
-                last = "exit %s: %s" % (proc.returncode, (proc.stderr or "")[:200])
+                last = "exit %s: %s" % (proc.returncode, (err or "")[:200])
                 continue
             try:
-                env_json = json.loads((proc.stdout or "").strip())
+                env_json = json.loads((out or "").strip())
             except ValueError:
                 last = "stdout parse fail"
                 continue
@@ -86,6 +119,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": {"message": "not found", "type": "invalid_request_error"}})
 
     def do_POST(self):
+        if self.path.rstrip("/") == "/cancel":   # 진행 중 claude 호출 취소(정지 버튼)
+            cancel_current()
+            self._send(200, {"cancelled": True})
+            return
         if self.path.rstrip("/") != "/v1/chat/completions":
             self._send(404, {"error": {"message": "not found", "type": "invalid_request_error"}})
             return

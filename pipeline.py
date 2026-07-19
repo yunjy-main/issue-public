@@ -325,6 +325,9 @@ def handle_step(body):
             out.update(extra)
         return out
 
+    if step == "LLM_CANCEL":   # 정지 버튼 — 진행 중 LLM 호출을 서버측에서 취소(claude-proxy kill)
+        return ok({"cancelled": bool(llm.cancel())}, ["STOP"])
+
     if step == "CAPTURE":
         text = (inp.get("text") or "").strip()
         if not text:
