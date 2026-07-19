@@ -321,6 +321,13 @@
   .rb-gate-row{font-size:10.5px;margin:2px 0}
   .rb-gate-row .mst-chip{background:var(--chip)}
   .rb-gate-acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
+  .gate-mst{margin:5px 0;padding:6px 7px;border:1px solid var(--accent);border-radius:5px;background:var(--panel)}
+  .gate-mst-h{font-size:10.5px;font-weight:700;color:var(--accent);margin-bottom:4px}
+  .gate-mi{display:flex;align-items:center;gap:5px;font-size:11px;padding:2px 0;flex-wrap:wrap}
+  .gate-mi input{margin:0;width:auto}
+  .gate-surf{font-family:var(--mono);min-width:64px}
+  .gate-sel{font:inherit;font-size:10.5px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:1px 4px}
+  .gate-node[hidden]{display:none}
   /* ---- 이슈 등록 폼 (좌표는 마스터 드롭다운) ---- */
   .if-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
   .if-grid .if-wide{grid-column:1/-1}
@@ -1159,8 +1166,9 @@ async function preflight(run){
     const mr=(await apiPost({step:"MASTER_RESOLVE",input:{source_id:run.sourceId}})).result;
     run.pre.master=mr;
     if(mr.needs_review){
+      try{await loadMaster();}catch(e){}   // 게이트 quick-register의 상위 node 목록용
       run.status="gate";run.phase="gate";updateRunBox(run);saveRuns();
-      setRunMsg(run.runId+" — 기준정보 검토 필요 (추출 대기)");return;
+      setRunMsg(run.runId+" — 기준정보 선행 필요 (게이트에서 바로 등록 가능)");return;
     }
     await startEvents(run);
   }catch(e){run.status="error";run.error=(e.code?e.code+" ":"")+e.message;updateRunBox(run);saveRuns();}
@@ -1501,23 +1509,65 @@ function runPreHtml(run){
   if(run.guide)h+=`<div class="rb-pre-stat">가이드: ${esc(run.guide)}</div>`;
   return h+`</div>`;
 }
-// 게이트1 — 기준정보가 확정돼야 추출한다(좌표가 틀리면 분류·매핑이 전부 오염되므로)
+// 게이트1 — 원문의 좌표가 기준정보에 아직 없으면 여기서 멈춘다. 원문으로 기준정보를 바로
+// 자동 제안·등록(선행) → 이어서 추출. 유저는 원문 낼 때 기준정보 존재 여부를 몰라도 된다.
 function runGateHtml(run){
-  const m=(run.pre&&run.pre.master)||{},cands=m.unknown_candidates||[],conf=[];
-  (m.docs||[]).forEach(d=>{
-    (d.conflicts||[]).forEach(c=>conf.push(`${c.kind}: ${(c.ids||[]).join(" vs ")} (둘 다 언급 — 미확정)`));
-    (d.guide_conflicts||[]).forEach(c=>conf.push(`${c.field}: 본문 ${c.body} vs 가이드 ${c.guide} (본문 우선)`));});
-  let h=`<div class="rb-gate"><div class="rb-gate-h">⏸ 기준정보 검토 필요 — 좌표 확정 후 추출합니다</div>`;
+  const m=(run.pre&&run.pre.master)||{},cands=m.unknown_candidates||[],gconf=[];
+  (m.docs||[]).forEach(d=>{(d.guide_conflicts||[]).forEach(c=>gconf.push(`${c.field}: 본문 ${c.body} vs 가이드 ${c.guide}`));});
+  let h=`<div class="rb-gate"><div class="rb-gate-h">⏸ 기준정보 선행 필요 — 원문의 좌표가 기준정보에 아직 없습니다</div>`;
   if(cands.length)h+=`<div class="rb-gate-row">미등록 후보 ${cands.length}: `
     +cands.map(c=>`<span class="mst-chip">${esc(c.surface)}</span>`).join(" ")
-    +` <span class="dim">— 기준정보 탭에서 등록하면 좌표가 붙습니다</span></div>`;
-  if(conf.length)h+=`<div class="rb-gate-row">충돌: ${conf.map(esc).join(" · ")}</div>`;
+    +` <span class="dim">— 아래에서 원문으로 바로 등록하세요</span></div>`;
+  if(gconf.length)h+=`<div class="rb-gate-row" style="color:var(--warn)">본문↔가이드 충돌: ${gconf.map(esc).join(" · ")}</div>`;
+  h+=gateMstHtml(run);
   h+=`<div class="rb-gate-acts">
-      <button class="btn" data-gatemst="1">기준정보 탭 열기</button>
-      <button class="btn primary" data-gatechk="${escAttr(run.runId)}">↻ 다시 확인</button>
-      <button class="btn" data-gateign="${escAttr(run.runId)}">이번엔 무시하고 추출</button>
+      <button class="btn" data-gatemst="1">기준정보 탭에서 직접</button>
+      <button class="btn" data-gatechk="${escAttr(run.runId)}">↻ 다시 확인</button>
+      <button class="btn" data-gateign="${escAttr(run.runId)}">무시하고 추출</button>
     </div></div>`;
   return h;
+}
+// 미등록 좌표의 종류 추정(휴리스틱) — 사람이 확정. 과제=project, N7 형태=node, N7P/N9Z 형태=process.
+function gateGuessKind(s){
+  s=String(s||"");
+  if(/과제$/.test(s)||/프로젝트/i.test(s))return "project";
+  if(/^\d+\s*(nm|나노)/i.test(s)||/^[A-Za-z]{1,3}\d{1,2}$/.test(s))return "node";   // N7·7nm
+  if(/^[A-Za-z]+\d[A-Za-z0-9]*$/.test(s))return "process";                          // N7P·N9Z·LN07LPP
+  return "product";
+}
+// 게이트 인라인 quick-register — 원문의 미등록 좌표를 여기서 바로 등록(결정론, 항상 동작).
+// 유저는 원문 낼 때 기준정보 존재를 몰라도 됨 — 종류(추정 프리셋)·process면 상위 node만 확인 후 등록→추출.
+function gateMstHtml(run){
+  const cands=((run.pre&&run.pre.master)||{}).unknown_candidates||[];
+  if(!cands.length)return '';
+  const nodes=((state.mgraph&&state.mgraph.entities)||[]).filter(e=>e.kind==="node");
+  const nodeOpts=nodes.map(n=>`<option>${esc(n.id)}</option>`).join("")||'<option value="">(node 없음 — node로 먼저)</option>';
+  return `<div class="gate-mst"><div class="gate-mst-h">🔧 미등록 좌표 등록 <span class="dim">종류 확인(추정 프리셋)·process면 상위 node 지정 → 등록하면 좌표가 붙습니다</span></div>`
+    +cands.map((c,i)=>{const g=gateGuessKind(c.surface);
+      return `<div class="gate-mi" data-gaterow="${i}">
+        <b class="gate-surf">${esc(c.surface)}</b>
+        <select class="gate-sel" data-gk="kind">${["node","process","product","project"].map(k=>`<option ${g===k?'selected':''}>${k}</option>`).join("")}</select>
+        <select class="gate-sel gate-node" data-gk="node" ${g==="process"?'':'hidden'}>${nodeOpts}</select>
+      </div>`;}).join("")
+    +`<div class="rb-gate-acts"><button class="btn primary" data-gatemstapply="${escAttr(run.runId)}">✓ 등록하고 계속</button>
+        <span class="dim">등록 후 자동으로 재확인 → 남은 게 없으면 추출을 시작합니다.</span></div></div>`;
+}
+async function gateMasterApply(runId){
+  const run=findRun(runId); const box=document.getElementById("rb-"+runId); if(!run||!box)return;
+  const rows=[...box.querySelectorAll("[data-gaterow]")];
+  if(!rows.length)return;
+  let n=0; const fails=[];
+  for(const row of rows){
+    const surface=row.querySelector(".gate-surf").textContent.trim();
+    const kind=row.querySelector('[data-gk="kind"]').value;
+    const item={id:surface};
+    if(kind==="process"){const nv=row.querySelector('[data-gk="node"]').value; if(!nv){fails.push(surface+"(상위 node 필요)");continue;} item.node=nv;}
+    try{await apiPost({step:"MASTER_UPSERT",input:{mtype:kind,item}});n++;}
+    catch(e){fails.push(surface+"("+(e.code||e.message)+")");}
+  }
+  toast("기준정보 "+n+"건 등록"+(fails.length?" · 실패 "+fails.length+": "+fails.join(", "):""));
+  try{await loadMaster(true);}catch(e){}   // 마스터 갱신(게이트 남을 때 node 목록)
+  await gateRecheck(runId);   // 재해소 → 남은 후보 없으면 추출 진행, 있으면 게이트 갱신
 }
 // 모든 run 상태에서 원문·재검토를 쓸 수 있게 하는 공용 액션행(+ 원문 표시 컨테이너).
 // redo=true면 🔄재검토(같은 원문으로 전처리·추출 재실행). sourceId 없으면 비움.
@@ -3061,6 +3111,8 @@ document.addEventListener("click",e=>{
     const t="link:"+lkr.dataset.linkrej;run.evReviews=run.evReviews||{};
     run.evReviews[t]=run.evReviews[t]==="reject"?"accept":"reject";saveRuns();updateRunBox(run);return;}
   // ── run-box 기준정보 게이트 ──
+  const gmapply=e.target.closest("[data-gatemstapply]");
+  if(gmapply){gateMasterApply(gmapply.dataset.gatemstapply);return;}
   const gchk=e.target.closest("[data-gatechk]");
   if(gchk){gateRecheck(gchk.dataset.gatechk);return;}
   const gign=e.target.closest("[data-gateign]");
@@ -3137,6 +3189,10 @@ document.addEventListener("change",e=>{
     run.evEdits[t][eved.dataset.eved]=eved.value;saveRuns();
     if(eved.dataset.eved==="kind"){const row=eved.closest(".ev-row");const b=row&&row.querySelector(".ev-kind");
       if(b){b.textContent=eved.value;b.className="ev-kind "+(EV_KIND_CLS[eved.value]||"");}}}}
+  // 게이트 quick-register: 종류 변경 → process일 때만 상위 node 셀렉트 표시
+  const gk=e.target.closest('[data-gk="kind"]');
+  if(gk){const row=gk.closest("[data-gaterow]");const ns=row&&row.querySelector('[data-gk="node"]');
+    if(ns)ns.hidden=(gk.value!=="process");return;}
   // 그래프 kind 필터 토글 → 재렌더
   const grk=e.target.closest("[data-grk]");
   if(grk){grHide()[grk.dataset.grk]=!grk.checked;renderGraph();return;}
