@@ -1598,10 +1598,10 @@ function runBoxHtml(run){
         (run._recapOpen?`<div class="rb-recap-body">${recapHtml(run)}</div>`:'')+`</div>`;
     }
     commit=`<div class="rb-commit"><div class="rb-done">✓ 확정</div></div>`;
-  }else if(run.flow==="event"&&st==="review"){   // 게이트2: 사건 검토 + 이슈 매핑
+  }else if(run.flow==="event"){   // 게이트2: 사건 검토 + 이슈 매핑 (상태가 조금 어긋나도 event 흐름이면 검토 UI)
     body=runActionsHtml(run,true)+runPreHtml(run)+runEventsHtml(run);
     commit=`<div class="rb-commit"><button class="rb-commit-btn" data-evcommit="${escAttr(run.runId)}">확정<br>COMMIT</button></div>`;
-  }else{   // 레거시: 후보 검토 + 확정
+  }else{   // 레거시: 후보 검토 + 확정 (runCandsHtml에 자체 원문 있음)
     body=runCandsHtml(run);
     commit=`<div class="rb-commit"><button class="rb-commit-btn" data-commit="${escAttr(run.runId)}">확정<br>COMMIT</button></div>`;}
   return `<div class="run-box" id="rb-${escAttr(run.runId)}" data-run="${escAttr(run.runId)}">
